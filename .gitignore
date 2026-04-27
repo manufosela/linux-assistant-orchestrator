@@ -1,0 +1,5 @@
+.env
+*.log
+.DS_Store
+.karajan/
+.reviews/
