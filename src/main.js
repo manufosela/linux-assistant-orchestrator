@@ -1,0 +1,167 @@
+import { loadConfig } from './infrastructure/config/load-config.js';
+import { createLogger } from './infrastructure/logger/create-logger.js';
+import { createScheduler } from './infrastructure/scheduler/scheduler.js';
+import { createDangerousCommandDetector } from './modules/security/dangerous-command-detector.js';
+import { createApprovalService } from './modules/security/approval-service.js';
+import { createAllowedChatPolicy } from './modules/security/allowed-chat-policy.js';
+import { createLlmProvider } from './modules/llm/llm-provider-factory.js';
+import { createLlmService } from './modules/llm/llm-service.js';
+import { createDownloadRulesRepository } from './modules/downloads/download-rules-repository.js';
+import { createFileClassifier } from './modules/downloads/file-classifier.js';
+import { createLlmFileClassifier } from './modules/downloads/llm-file-classifier.js';
+import { createFileMover } from './modules/downloads/file-mover.js';
+import { createDownloadWatcher } from './modules/downloads/download-watcher.js';
+import { createAssistantStatusService } from './modules/assistant/assistant-status-service.js';
+import { createTelegramBot } from './apps/telegram-bot/create-telegram-bot.js';
+import { createTelegramCommandRouter } from './apps/telegram-bot/telegram-command-router.js';
+import { registerTelegramHandlers } from './apps/telegram-bot/telegram-message-handler.js';
+
+const startTime = new Date();
+
+async function main() {
+  const config = loadConfig();
+  const logger = createLogger({
+    level: config.logLevel,
+    name: config.assistantName,
+    pretty: config.env === 'development',
+  });
+
+  logger.info({ name: config.assistantName, env: config.env }, 'Assistant starting');
+
+  // Infrastructure
+  const scheduler = createScheduler();
+
+  // Security
+  const dangerousCommandDetector = createDangerousCommandDetector();
+  const approvalService = createApprovalService(logger);
+  const allowedChatPolicy = createAllowedChatPolicy(config.telegram.allowedChatIds, logger);
+
+  // LLM
+  let llmProvider;
+  try {
+    llmProvider = createLlmProvider(config.llm, logger);
+  } catch (error) {
+    logger.error({ err: error.message }, 'Failed to create LLM provider');
+    process.exit(1);
+  }
+  const llmService = createLlmService(llmProvider, config.llm, logger);
+
+  // Downloads
+  const rulesRepository = createDownloadRulesRepository(config.downloads.rulesPath, logger);
+  const fileClassifier = createFileClassifier(rulesRepository);
+  const llmFileClassifier = createLlmFileClassifier(llmService, rulesRepository, logger);
+  const fileMover = createFileMover(logger);
+  const downloadWatcher = createDownloadWatcher(config.downloads.watchPath, logger);
+
+  // Wire download pipeline: new file → classify → move
+  downloadWatcher.onNewFile(async (filePath) => {
+    let classification = await fileClassifier.classify(filePath);
+
+    if (!classification.matched && config.downloads.enableLlmClassification) {
+      logger.debug({ filePath }, 'Rule-based classification failed — trying LLM');
+      classification = await llmFileClassifier.classify(filePath);
+    }
+
+    if (classification.matched && classification.rule) {
+      const result = await fileMover.moveToDirectory(filePath, classification.rule.targetPath);
+      if (result.success) {
+        logger.info(
+          { filePath, targetPath: result.targetPath, method: classification.method, rule: classification.rule.name },
+          'File organised'
+        );
+      } else if (result.skipped) {
+        logger.warn({ filePath, reason: result.skipReason }, 'File move skipped');
+      } else {
+        logger.error({ filePath, err: result.error }, 'File move failed');
+      }
+    } else {
+      logger.info({ filePath }, 'No matching rule — file left in place');
+    }
+  });
+
+  // Assistant status
+  const moduleStatuses = [
+    { name: 'telegram', status: config.telegram.botToken ? 'enabled' : 'disabled', note: config.telegram.botToken ? undefined : 'No bot token' },
+    { name: 'downloads', status: 'enabled' },
+    { name: 'llm', status: 'enabled', note: `provider: ${config.llm.provider}` },
+    { name: 'email', status: 'placeholder', note: `provider: ${config.email.provider}` },
+    { name: 'calendar', status: 'placeholder', note: `provider: ${config.calendar.provider}` },
+    { name: 'planning-game', status: config.planningGame.baseUrl ? 'enabled' : 'placeholder' },
+    { name: 'code-agents', status: config.codeAgents.enableRemoteCodeTasks ? 'enabled' : 'disabled' },
+  ];
+
+  const statusService = createAssistantStatusService({
+    assistantName: config.assistantName,
+    startTime,
+    modules: moduleStatuses,
+  });
+
+  // Telegram bot
+  let bot = null;
+  let telegramStop = async () => {};
+
+  if (config.telegram.botToken) {
+    const { bot: telegramBot, start, stop } = createTelegramBot(config.telegram.botToken, logger);
+    bot = telegramBot;
+    telegramStop = stop;
+
+    const router = createTelegramCommandRouter(allowedChatPolicy, logger);
+
+    registerTelegramHandlers({
+      bot,
+      statusService,
+      rulesRepository,
+      llmService,
+      router,
+      logger,
+    });
+
+    bot.on('message', (message) => {
+      router.route(message).catch((error) => {
+        logger.error({ err: error.message }, 'Unhandled error in message routing');
+      });
+    });
+
+    bot.on('error', (error) => {
+      logger.error({ err: error.message }, 'Telegram bot error');
+    });
+
+    start();
+  } else {
+    logger.warn('TELEGRAM_BOT_TOKEN not set — Telegram bot is disabled');
+  }
+
+  // Start download watcher
+  downloadWatcher.start();
+
+  logger.info({ name: config.assistantName }, 'Assistant ready');
+
+  // Graceful shutdown
+  const shutdown = async (signal) => {
+    logger.info({ signal }, 'Shutdown signal received');
+    scheduler.stopAll();
+    await downloadWatcher.stop();
+    await telegramStop();
+    logger.info('Assistant stopped');
+    process.exit(0);
+  };
+
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+  // Keep process alive
+  process.on('uncaughtException', (error) => {
+    logger.error({ err: error.message, stack: error.stack }, 'Uncaught exception');
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    logger.error({ reason: String(reason) }, 'Unhandled promise rejection');
+  });
+}
+
+main().catch((error) => {
+  // Logger may not be ready yet — use console here only
+  // eslint-disable-next-line no-console
+  console.error('Fatal error during startup:', error);
+  process.exit(1);
+});

@@ -1,0 +1,29 @@
+{
+  "rules": [
+    {
+      "name": "PDF documents",
+      "extensions": [".pdf"],
+      "targetPath": "/home/manu/Documentos/PDF"
+    },
+    {
+      "name": "Compressed files",
+      "extensions": [".zip", ".tar", ".gz", ".7z"],
+      "targetPath": "/home/manu/Descargas/Comprimidos"
+    },
+    {
+      "name": "Images",
+      "extensions": [".jpg", ".jpeg", ".png", ".webp"],
+      "targetPath": "/home/manu/Imágenes/Entrantes"
+    },
+    {
+      "name": "STL files",
+      "extensions": [".stl"],
+      "targetPath": "/home/manu/Documentos/STL"
+    },
+    {
+      "name": "Spreadsheets",
+      "extensions": [".csv", ".xls", ".xlsx", ".ods"],
+      "targetPath": "/home/manu/Documentos/HojasCalculo"
+    }
+  ]
+}
