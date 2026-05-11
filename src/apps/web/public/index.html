@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>luis</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="header__title">
+      <span class="header__dot" id="status-dot" data-state="unknown"></span>
+      <h1>luis</h1>
+      <span class="muted" id="assistant-uptime">…</span>
+    </div>
+    <div class="header__meta">
+      <button id="reset-btn" class="btn btn--ghost" type="button" title="Vaciar conversación">↺</button>
+      <button id="refresh-btn" class="btn btn--ghost" type="button" title="Actualizar estado">⟳</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel panel--chat" id="chat-panel">
+      <div class="conversation" id="conversation" aria-live="polite"></div>
+      <form id="chat-form" autocomplete="off">
+        <textarea
+          id="chat-input"
+          name="prompt"
+          rows="3"
+          placeholder="Escribe un mensaje, /fetch <url>, /search <query>, /reset, /help…"
+          required></textarea>
+        <div class="chat-controls">
+          <span id="chat-status" class="muted"></span>
+          <button type="submit" class="btn btn--primary" id="chat-submit">Enviar</button>
+        </div>
+      </form>
+    </section>
+
+    <aside class="sidebar">
+      <section class="panel">
+        <h2>LLM</h2>
+        <dl id="llm-info" class="kv">
+          <dt>Provider</dt><dd id="llm-provider">…</dd>
+          <dt>Modelo</dt><dd id="llm-model">…</dd>
+          <dt>Endpoint</dt><dd id="llm-endpoint" class="mono">…</dd>
+          <dt>Health</dt><dd id="llm-health">…</dd>
+        </dl>
+      </section>
+
+      <section class="panel">
+        <h2>Módulos</h2>
+        <ul id="modules-list" class="modules"></ul>
+      </section>
+
+      <section class="panel">
+        <h2>Reglas de descarga</h2>
+        <ol id="rules-list" class="rules"></ol>
+      </section>
+
+      <section class="panel">
+        <h2>Comandos</h2>
+        <ul class="slash-help">
+          <li><code>/fetch &lt;url&gt;</code> — descarga la URL al contexto</li>
+          <li><code>/search &lt;query&gt;</code> — busca y añade al contexto</li>
+          <li><code>/ha &lt;texto&gt;</code> — pedir algo a Home Assistant</li>
+          <li><code>/reset</code> — vacía la conversación</li>
+          <li><code>/help</code> — lista comandos</li>
+        </ul>
+      </section>
+    </aside>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -52,6 +52,51 @@ export function createLlmService(provider, config, logger) {
   }
 
   /**
+   * Chat-style call with a full messages array (multi-turn conversations and slash commands).
+   * Same privacy policies as generateText: private requests are blocked from cloud providers
+   * unless the operator explicitly enabled them.
+   *
+   * @param {Array<{ role: 'system'|'user'|'assistant', content: string }>} messages
+   * @param {{ module?: string, operation?: string, private?: boolean, maxTokens?: number, temperature?: number, model?: string }} [options]
+   * @returns {Promise<string>}
+   */
+  async function chat(messages, options = {}) {
+    const {
+      module: moduleName = 'unknown',
+      operation = 'chat',
+      private: isPrivate = true,
+      maxTokens,
+      temperature,
+      model,
+    } = options;
+
+    if (isPrivate && config.provider === 'cloud' && !config.allowCloudLlm) {
+      throw new PrivateDataCloudError(moduleName, operation);
+    }
+
+    if (typeof provider.chat !== 'function') {
+      throw new Error('Configured LLM provider does not support multi-turn chat');
+    }
+
+    const correlationId = randomUUID();
+
+    const response = await provider.chat({
+      messages,
+      maxTokens,
+      temperature,
+      model,
+      metadata: {
+        module: moduleName,
+        operation,
+        correlationId,
+        timestamp: new Date().toISOString(),
+      },
+    });
+
+    return response.text;
+  }
+
+  /**
    * Checks the health of the configured LLM provider.
    *
    * @returns {Promise<import('../../../types/llm.js').LlmHealthStatus>}
@@ -75,7 +120,7 @@ export function createLlmService(provider, config, logger) {
     return status;
   }
 
-  return { generateText, checkHealth };
+  return { generateText, chat, checkHealth };
 }
 
 /**
@@ -97,5 +142,6 @@ export class PrivateDataCloudError extends Error {
 /**
  * @typedef {Object} LlmService
  * @property {(prompt: string, options?: object) => Promise<string>} generateText
+ * @property {(messages: Array<{ role: string, content: string }>, options?: object) => Promise<string>} chat
  * @property {() => Promise<import('../../../types/llm.js').LlmHealthStatus>} checkHealth
  */
