@@ -23,6 +23,7 @@ export function createSmartHomeAssistantClient({ haClient, stateCache, logger })
    */
   async function processConversation(text, options = {}) {
     if (stateCache && stateCache.areaCount > 0) {
+      logger?.info({ text: text.slice(0, 80) }, 'HA smart-client: trying fast path');
       try {
         const fast = await tryFastPath({ text, stateCache, haClient, logger });
         if (fast?.handled) {
@@ -38,7 +39,10 @@ export function createSmartHomeAssistantClient({ haClient, stateCache, logger })
       } catch (error) {
         logger?.warn({ err: error?.message }, 'HA fast path failed — falling back to LLM');
       }
+    } else {
+      logger?.info({ areaCount: stateCache?.areaCount ?? 0 }, 'HA smart-client: skipping fast path (cache empty)');
     }
+    logger?.info({ text: text.slice(0, 80) }, 'HA smart-client: falling back to HA conversation agent');
     return haClient.processConversation(text, options);
   }
 
