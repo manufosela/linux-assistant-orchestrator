@@ -15,7 +15,7 @@
  * }} deps
  * @returns {HomeAssistantClient}
  */
-export function createHomeAssistantClient({ baseUrl, token, logger, timeoutMs = 600_000, language = 'es', agentId = '' }) {
+export function createHomeAssistantClient({ baseUrl, token, logger, timeoutMs = 60_000, language = 'es', agentId = '' }) {
   const normalisedBase = String(baseUrl ?? '').replace(/\/+$/, '');
   const defaultAgentId = String(agentId ?? '').trim();
 
@@ -43,6 +43,12 @@ export function createHomeAssistantClient({ baseUrl, token, logger, timeoutMs = 
       const chosenAgent = options.agentId ?? defaultAgentId;
       if (chosenAgent) body.agent_id = chosenAgent;
 
+      logger?.info(
+        { agentId: chosenAgent || '(default)', length: trimmed.length, timeoutMs },
+        'HA conversation request: sending',
+      );
+      const startedAt = Date.now();
+
       const response = await fetch(`${normalisedBase}/api/conversation/process`, {
         method: 'POST',
         headers: {
@@ -52,6 +58,11 @@ export function createHomeAssistantClient({ baseUrl, token, logger, timeoutMs = 
         body: JSON.stringify(body),
         signal: controller.signal,
       });
+
+      logger?.info(
+        { status: response.status, ms: Date.now() - startedAt },
+        'HA conversation request: response headers received',
+      );
 
       if (!response.ok) {
         throw new Error(`Home Assistant returned HTTP ${response.status} ${response.statusText}`);
@@ -63,7 +74,10 @@ export function createHomeAssistantClient({ baseUrl, token, logger, timeoutMs = 
       const errorCode = data?.response?.data?.code ?? null;
       const conversationId = data?.conversation_id ?? null;
 
-      logger?.info({ length: trimmed.length, responseType, errorCode }, 'Home Assistant conversation processed');
+      logger?.info(
+        { length: trimmed.length, responseType, errorCode, ms: Date.now() - startedAt },
+        'HA conversation processed',
+      );
 
       return { speech, responseType, errorCode, conversationId, raw: data };
     } catch (error) {
@@ -154,7 +168,9 @@ function wrapNetworkError(error, baseUrl, timeoutMs) {
     return new Error(`Home Assistant: error desconocido (${String(error)})`);
   }
   if (error.name === 'AbortError') {
-    return new Error(`Home Assistant no respondió en ${timeoutMs}ms (¿está caído o muy cargado?)`);
+    return new Error(
+      `Home Assistant no respondió en ${timeoutMs}ms. Causas habituales: agent de conversación colgado (revisa agentId en config), HA cargando, o un automation bloqueante. Ejecuta con CLI_LOG_LEVEL=info para ver el detalle.`,
+    );
   }
   // Already a wrapped HTTP / domain error — pass through.
   if (error.message.startsWith('Home Assistant ')) return error;
