@@ -9,6 +9,8 @@
 export function createTelegramCommandRouter(allowedChatPolicy, logger) {
   /** @type {Map<string, CommandHandler>} */
   const handlers = new Map();
+  /** @type {CommandHandler | null} */
+  let fallbackHandler = null;
 
   /**
    * Registers a handler for a given command (e.g. '/status').
@@ -18,6 +20,16 @@ export function createTelegramCommandRouter(allowedChatPolicy, logger) {
    */
   function register(command, handler) {
     handlers.set(command.toLowerCase(), handler);
+  }
+
+  /**
+   * Registers the handler invoked for non-command messages from authorised chats.
+   * Used to bridge natural-language input into the LLM service.
+   *
+   * @param {CommandHandler} handler
+   */
+  function setFallback(handler) {
+    fallbackHandler = handler;
   }
 
   /**
@@ -38,7 +50,16 @@ export function createTelegramCommandRouter(allowedChatPolicy, logger) {
 
     const command = extractCommand(text);
     if (!command) {
-      logger.debug({ chatId, text: text.slice(0, 50) }, 'Non-command message received — ignoring');
+      if (!fallbackHandler) {
+        logger.debug({ chatId, text: text.slice(0, 50) }, 'Non-command message received — no fallback registered');
+        return;
+      }
+      logger.debug({ chatId }, 'Routing to fallback handler');
+      try {
+        await fallbackHandler(message);
+      } catch (error) {
+        logger.error({ chatId, err: error.message }, 'Fallback handler threw an error');
+      }
       return;
     }
 
@@ -99,7 +120,7 @@ export function createTelegramCommandRouter(allowedChatPolicy, logger) {
     return command ? `/${command}` : null;
   }
 
-  return { register, route, listCommands };
+  return { register, setFallback, route, listCommands };
 }
 
 /**
@@ -118,6 +139,7 @@ export function createTelegramCommandRouter(allowedChatPolicy, logger) {
 /**
  * @typedef {Object} TelegramCommandRouter
  * @property {(command: string, handler: CommandHandler) => void} register
+ * @property {(handler: CommandHandler) => void} setFallback
  * @property {(message: TelegramMessage) => Promise<void>} route
  * @property {() => string[]} listCommands
  */

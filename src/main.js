@@ -15,6 +15,12 @@ import { createAssistantStatusService } from './modules/assistant/assistant-stat
 import { createTelegramBot } from './apps/telegram-bot/create-telegram-bot.js';
 import { createTelegramCommandRouter } from './apps/telegram-bot/telegram-command-router.js';
 import { registerTelegramHandlers } from './apps/telegram-bot/telegram-message-handler.js';
+import { createWebApp } from './apps/web/create-web-app.js';
+import { createUrlFetcher } from './modules/web/url-fetcher.js';
+import { createWebSearchService } from './modules/web/web-search.js';
+import { createHomeAssistantClient } from './modules/home-assistant/ha-client.js';
+import { createHomeAssistantStateCache } from './modules/home-assistant/ha-state-cache.js';
+import { createSmartHomeAssistantClient } from './modules/home-assistant/ha-smart-client.js';
 
 const startTime = new Date();
 
@@ -88,6 +94,7 @@ async function main() {
     { name: 'calendar', status: 'placeholder', note: `provider: ${config.calendar.provider}` },
     { name: 'planning-game', status: config.planningGame.baseUrl ? 'enabled' : 'placeholder' },
     { name: 'code-agents', status: config.codeAgents.enableRemoteCodeTasks ? 'enabled' : 'disabled' },
+    { name: 'web', status: config.web.enabled ? 'enabled' : 'disabled', note: config.web.enabled ? `${config.web.host}:${config.web.port}` : undefined },
   ];
 
   const statusService = createAssistantStatusService({
@@ -95,6 +102,45 @@ async function main() {
     startTime,
     modules: moduleStatuses,
   });
+
+  // Web tools (URL fetch + search) — shared with the web app, CLI and Telegram
+  const urlFetcher = createUrlFetcher({
+    logger,
+    allowPrivateNetworks: config.webTools.urlFetch.allowPrivateNetworks,
+    privateAllowlist: config.webTools.urlFetch.privateAllowlist,
+  });
+  const webSearch = config.webTools.search.baseUrl
+    ? createWebSearchService({
+        baseUrl: config.webTools.search.baseUrl,
+        apiKey: config.webTools.search.apiKey,
+        logger,
+      })
+    : undefined;
+
+  let homeAssistant;
+  let homeAssistantStateCache;
+  if (config.homeAssistant.baseUrl && config.homeAssistant.token) {
+    const baseClient = createHomeAssistantClient({
+      baseUrl: config.homeAssistant.baseUrl,
+      token: config.homeAssistant.token,
+      language: config.homeAssistant.language,
+      agentId: config.homeAssistant.agentId,
+      logger,
+    });
+    homeAssistantStateCache = createHomeAssistantStateCache({
+      baseUrl: config.homeAssistant.baseUrl,
+      token: config.homeAssistant.token,
+      logger,
+    });
+    homeAssistantStateCache.start().catch((error) =>
+      logger.warn({ err: error?.message }, 'HA state cache initial load failed (will retry)'),
+    );
+    homeAssistant = createSmartHomeAssistantClient({
+      haClient: baseClient,
+      stateCache: homeAssistantStateCache,
+      logger,
+    });
+  }
 
   // Telegram bot
   let bot = null;
@@ -112,6 +158,9 @@ async function main() {
       statusService,
       rulesRepository,
       llmService,
+      urlFetcher,
+      webSearch,
+      homeAssistant,
       router,
       logger,
     });
@@ -134,6 +183,31 @@ async function main() {
   // Start download watcher
   downloadWatcher.start();
 
+  // Web app (optional, off by default — bind to LAN, no auth)
+  let webStop = async () => {};
+  if (config.web.enabled) {
+    try {
+      const webApp = createWebApp({
+        llmService,
+        statusService,
+        rulesRepository,
+        urlFetcher,
+        webSearch,
+        homeAssistant,
+        logger,
+        host: config.web.host,
+        port: config.web.port,
+      });
+      const { address } = await webApp.start();
+      webStop = webApp.stop;
+      logger.info({ address }, 'Web app started');
+    } catch (error) {
+      logger.error({ err: error?.message }, 'Failed to start web app');
+    }
+  } else {
+    logger.info('Web app disabled (set WEB_ENABLED=true to enable)');
+  }
+
   logger.info({ name: config.assistantName }, 'Assistant ready');
 
   // Graceful shutdown
@@ -142,6 +216,8 @@ async function main() {
     scheduler.stopAll();
     await downloadWatcher.stop();
     await telegramStop();
+    await webStop();
+    homeAssistantStateCache?.stop();
     logger.info('Assistant stopped');
     process.exit(0);
   };

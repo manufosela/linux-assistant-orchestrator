@@ -101,6 +101,30 @@ export function loadConfig(envPath = '.env') {
       enableRemoteCodeTasks: process.env.ENABLE_REMOTE_CODE_TASKS === 'true',
       requireApproval: process.env.REQUIRE_APPROVAL_FOR_CODE_TASKS !== 'false',
     },
+
+    web: {
+      enabled: process.env.WEB_ENABLED === 'true',
+      host: process.env.WEB_HOST ?? '0.0.0.0',
+      port: Number(process.env.WEB_PORT ?? 3000),
+    },
+
+    webTools: {
+      search: {
+        baseUrl: process.env.WEB_SEARCH_BASE_URL ?? '',
+        apiKey: process.env.WEB_SEARCH_API_KEY ?? '',
+      },
+      urlFetch: {
+        allowPrivateNetworks: process.env.URL_FETCH_ALLOW_PRIVATE === 'true',
+        privateAllowlist: (process.env.URL_FETCH_ALLOWLIST ?? '').split(',').map((entry) => entry.trim()).filter(Boolean),
+      },
+    },
+
+    homeAssistant: {
+      baseUrl: process.env.HA_BASE_URL ?? '',
+      token: process.env.HA_TOKEN ?? '',
+      language: process.env.HA_LANGUAGE ?? 'es',
+      agentId: process.env.HA_AGENT_ID ?? '',
+    },
   };
 }
 
@@ -116,4 +140,7 @@ export function loadConfig(envPath = '.env') {
  * @property {{ provider: string, readOnly: boolean }} calendar
  * @property {{ baseUrl: string, apiKey: string }} planningGame
  * @property {{ workspacesPath: string, enableRemoteCodeTasks: boolean, requireApproval: boolean }} codeAgents
+ * @property {{ enabled: boolean, host: string, port: number }} web
+ * @property {{ search: { baseUrl: string, apiKey: string }, urlFetch: { allowPrivateNetworks: boolean, privateAllowlist: string[] } }} webTools
+ * @property {{ baseUrl: string, token: string, language: string, agentId: string }} homeAssistant
  */

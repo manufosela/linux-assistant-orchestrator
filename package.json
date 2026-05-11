@@ -4,8 +4,12 @@
   "description": "Local Linux personal assistant orchestrator",
   "type": "module",
   "main": "src/main.js",
+  "bin": {
+    "luis": "./src/apps/cli/bin/luis.js"
+  },
   "scripts": {
     "start": "node src/main.js",
+    "luis": "node src/apps/cli/bin/luis.js",
     "test": "node --test 'test/**/*.test.js'",
     "test:watch": "node --test --watch 'test/**/*.test.js'"
   },

@@ -11,8 +11,15 @@ import { createHttpClient } from '../../infrastructure/http/create-http-client.j
 export function createLocalLlmProvider(config, logger) {
   const headers = config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {};
 
+  // Accept both forms of baseUrl:
+  //   "http://host:port"        — server root, paths below use /v1/...
+  //   "http://host:port/v1"     — already includes the OpenAI prefix; strip it
+  // OpenAI's own convention is the second form; users coming from there expect /v1 in the URL.
+  // Internally we always speak server-root + /v1/... so the http client is consistent.
+  const baseUrl = String(config.baseUrl ?? '').replace(/\/+v1\/?$/, '').replace(/\/$/, '');
+
   const httpClient = createHttpClient({
-    baseUrl: config.baseUrl,
+    baseUrl,
     defaultTimeoutMs: config.timeoutMs,
     defaultHeaders: headers,
   });
@@ -25,28 +32,48 @@ export function createLocalLlmProvider(config, logger) {
    */
   async function generateText(request) {
     const { prompt, systemPrompt, maxTokens = 1024, temperature = 0.7, metadata } = request;
-
-    logger.info(
-      {
-        module: metadata.module,
-        operation: metadata.operation,
-        provider: 'local',
-        model: config.model,
-        promptLength: prompt.length,
-        correlationId: metadata.correlationId,
-        timestamp: new Date().toISOString(),
-      },
-      'LLM request'
-    );
-
     const messages = [];
     if (systemPrompt) {
       messages.push({ role: 'system', content: systemPrompt });
     }
     messages.push({ role: 'user', content: prompt });
+    return chat({ messages, maxTokens, temperature, metadata, model: config.model });
+  }
+
+  /**
+   * Chat-style call: takes a full messages array (system + user/assistant turns) and returns
+   * the model's next reply. Used for multi-turn conversations and slash commands.
+   *
+   * @param {{
+   *   messages: Array<{ role: 'system'|'user'|'assistant', content: string }>,
+   *   maxTokens?: number,
+   *   temperature?: number,
+   *   model?: string,
+   *   metadata: import('../../../types/llm.js').LlmRequestMetadata,
+   * }} request
+   * @returns {Promise<import('../../../types/llm.js').LlmPromptResponse>}
+   */
+  async function chat(request) {
+    const { messages, maxTokens = 1024, temperature = 0.7, metadata } = request;
+    const model = request.model ?? config.model;
+
+    const promptLength = messages.reduce((acc, m) => acc + (m?.content?.length ?? 0), 0);
+    logger.info(
+      {
+        module: metadata.module,
+        operation: metadata.operation,
+        provider: 'local',
+        model,
+        turns: messages.length,
+        promptLength,
+        correlationId: metadata.correlationId,
+        timestamp: new Date().toISOString(),
+      },
+      'LLM chat request'
+    );
 
     const requestBody = {
-      model: config.model,
+      model,
       messages,
       max_tokens: maxTokens,
       temperature,
@@ -66,7 +93,7 @@ export function createLocalLlmProvider(config, logger) {
 
     return {
       text,
-      model: response.model ?? config.model,
+      model: response.model ?? model,
       provider: 'local',
       usage: response.usage
         ? {
@@ -91,7 +118,7 @@ export function createLocalLlmProvider(config, logger) {
     }
   }
 
-  return { generateText, checkHealth };
+  return { generateText, chat, checkHealth };
 }
 
 /**

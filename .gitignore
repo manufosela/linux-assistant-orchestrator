@@ -3,3 +3,6 @@
 .DS_Store
 .karajan/
 .reviews/
+node_modules/
+config/download-rules.json
+

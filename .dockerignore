@@ -1,0 +1,13 @@
+node_modules
+.git
+.github
+test
+*.test.js
+.env
+.env.*
+.vscode
+.idea
+.DS_Store
+README.md
+sonar-project.properties
+SPEC-*.md
