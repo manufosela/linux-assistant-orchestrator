@@ -81,7 +81,7 @@ export function createCliApp(deps) {
  * }} deps
  */
 function registerCommands(deps) {
-  const { router, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, logger, remoteCodeTasksEnabled } = deps;
+  const { router, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, logger, remoteCodeTasksEnabled } = deps;
 
   router.register('status', async ({ renderer }) => {
     const status = statusService.getStatus();
@@ -238,6 +238,28 @@ function registerCommands(deps) {
       return { exitCode: 1 };
     }
   }, { description: 'Send a natural-language command to Home Assistant' });
+
+  router.register('announce', async ({ args, flags, renderer }) => {
+    const message = args.join(' ').trim();
+    if (!message) {
+      renderer.error('Usage: luis announce "mensaje" [--to <salon|dormitorio|cocina|show|pop|pueblo|casa|firetv>]');
+      return { exitCode: 1 };
+    }
+    if (!alexaAnnouncer) {
+      renderer.error('Alexa announcer no configurado. Necesita Home Assistant + integración alexa_media_player en ~/.config/luis/config.json.');
+      return { exitCode: 1 };
+    }
+    const target = typeof flags.to === 'string' ? flags.to : (typeof flags.target === 'string' ? flags.target : undefined);
+    try {
+      const result = await alexaAnnouncer.announce(message, { target });
+      renderer.print(`📣 Anunciado vía ${result.service}.`);
+      return { exitCode: 0 };
+    } catch (error) {
+      logger.warn({ err: error?.message, target }, 'CLI announce failed');
+      renderer.error(`Announce failed: ${error?.message ?? 'unknown error'}`);
+      return { exitCode: 1 };
+    }
+  }, { description: 'Send a spoken announcement to an Alexa/Echo via Home Assistant' });
 
   router.register('help', async () => {
     router.printHelp();

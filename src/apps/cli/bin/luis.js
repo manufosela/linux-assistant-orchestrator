@@ -15,6 +15,7 @@ import { createWebSearchService } from '../../../modules/web/web-search.js';
 import { createHomeAssistantClient } from '../../../modules/home-assistant/ha-client.js';
 import { createHomeAssistantStateCache } from '../../../modules/home-assistant/ha-state-cache.js';
 import { createSmartHomeAssistantClient } from '../../../modules/home-assistant/ha-smart-client.js';
+import { createAlexaAnnouncer } from '../../../modules/home-assistant/ha-alexa-announcer.js';
 import { createCliApp } from '../create-cli-app.js';
 import { loadUserConfig } from '../user-config-loader.js';
 
@@ -96,6 +97,7 @@ async function main() {
       })
     : undefined;
   let homeAssistant;
+  let alexaAnnouncer;
   if (config.homeAssistant.baseUrl && config.homeAssistant.token) {
     const baseClient = createHomeAssistantClient({
       baseUrl: config.homeAssistant.baseUrl,
@@ -116,6 +118,7 @@ async function main() {
       stateCache,
       logger,
     });
+    alexaAnnouncer = createAlexaAnnouncer({ haClient: baseClient, logger });
   }
   const statusService = createAssistantStatusService({
     // Hard-coded — the CLI binary IS `luis`. Ignore ASSISTANT_NAME / config so this name
@@ -133,6 +136,7 @@ async function main() {
     urlFetcher,
     webSearch,
     homeAssistant,
+    alexaAnnouncer,
     logger,
     appName: APP_NAME,
     appVersion: pkg.version,
