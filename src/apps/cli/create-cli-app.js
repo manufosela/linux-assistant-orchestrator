@@ -239,27 +239,33 @@ function registerCommands(deps) {
     }
   }, { description: 'Send a natural-language command to Home Assistant' });
 
-  router.register('announce', async ({ args, flags, renderer }) => {
+  router.register('anuncia', async ({ args, flags, renderer }) => {
     const message = args.join(' ').trim();
     if (!message) {
-      renderer.error('Usage: luis announce "mensaje" [--to <salon|dormitorio|cocina|show|pop|pueblo|casa|firetv>]');
+      renderer.error('Uso: luis anuncia "mensaje" [--en <salon|dormitorio|cocina|show|pop|pueblo|casa|firetv>]');
       return { exitCode: 1 };
     }
     if (!alexaAnnouncer) {
-      renderer.error('Alexa announcer no configurado. Necesita Home Assistant + integración alexa_media_player en ~/.config/luis/config.json.');
+      renderer.error('Anuncios Alexa no configurados. Necesita Home Assistant + integración alexa_media_player en ~/.config/luis/config.json.');
       return { exitCode: 1 };
     }
-    const target = typeof flags.to === 'string' ? flags.to : (typeof flags.target === 'string' ? flags.target : undefined);
+    const target = typeof flags.en === 'string'
+      ? flags.en
+      : typeof flags.to === 'string'
+        ? flags.to
+        : typeof flags.target === 'string'
+          ? flags.target
+          : undefined;
     try {
       const result = await alexaAnnouncer.announce(message, { target });
       renderer.print(`📣 Anunciado vía ${result.service}.`);
       return { exitCode: 0 };
     } catch (error) {
-      logger.warn({ err: error?.message, target }, 'CLI announce failed');
-      renderer.error(`Announce failed: ${error?.message ?? 'unknown error'}`);
+      logger.warn({ err: error?.message, target }, 'CLI anuncia failed');
+      renderer.error(`No pude anunciar: ${error?.message ?? 'error desconocido'}`);
       return { exitCode: 1 };
     }
-  }, { description: 'Send a spoken announcement to an Alexa/Echo via Home Assistant' });
+  }, { description: 'Envía un anuncio hablado a un Echo de Alexa vía Home Assistant' });
 
   router.register('help', async () => {
     router.printHelp();

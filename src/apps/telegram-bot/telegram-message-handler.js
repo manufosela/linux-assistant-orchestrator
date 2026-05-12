@@ -23,7 +23,7 @@ const SYSTEM_PROMPT =
  * @param {import('pino').Logger} deps.logger
  * @returns {void}
  */
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -230,6 +230,37 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     }
   });
 
+  router.register('/anuncia', async (message) => {
+    const chatId = message.chat.id;
+    const raw = extractArgs(message.text ?? '');
+    const parsed = parseAnnounceArgs(raw);
+
+    if (!parsed.message) {
+      await bot.sendMessage(
+        chatId,
+        'Uso: /anuncia [--en &lt;salon|dormitorio|cocina|show|pop|pueblo|casa|firetv&gt;] &lt;mensaje&gt;',
+        { parse_mode: 'HTML' },
+      );
+      return;
+    }
+    if (!alexaAnnouncer) {
+      await bot.sendMessage(chatId, 'Anuncios Alexa no configurados.');
+      return;
+    }
+
+    const indicator = await createThinkingIndicator(bot, chatId, {
+      text: '📣 Enviando anuncio…',
+      logger,
+    });
+    try {
+      const result = await alexaAnnouncer.announce(parsed.message, { target: parsed.target });
+      await indicator.finish(`📣 Anunciado en ${result.target} (${result.service}).`);
+    } catch (error) {
+      logger.warn({ chatId, err: error.message, target: parsed.target }, '/anuncia failed');
+      await indicator.finish(`❌ No pude anunciar: ${error.message}`);
+    }
+  });
+
   router.register('/help', async (message) => {
     const chatId = message.chat.id;
     const text = [
@@ -241,6 +272,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '/fetch &lt;url&gt; — descargar URL al contexto',
       '/search &lt;query&gt; — buscar en la web',
       '/ha &lt;texto&gt; — pedir algo a Home Assistant',
+      '/anuncia [--en &lt;destino&gt;] &lt;texto&gt; — anuncio hablado en Alexa',
       '/reset — borrar la conversación',
       '/status — estado del asistente',
       '/llm_status — estado del LLM',
@@ -287,4 +319,27 @@ function escapeHtml(input) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+/**
+ * Parses the argument string of `/anuncia` into `{ target, message }`.
+ *
+ * Supported syntaxes:
+ *   /anuncia mensaje completo aqui                  → broadcast a casa
+ *   /anuncia --en salon mensaje                     → solo al salón
+ *   /anuncia --to dormitorio mensaje                → alias en inglés
+ *
+ * The flag must come before the message text. Quotes around the message are not required.
+ *
+ * @param {string} raw - everything after the `/anuncia` token
+ * @returns {{ target: string | undefined, message: string }}
+ */
+function parseAnnounceArgs(raw) {
+  const text = String(raw ?? '').trim();
+  if (!text) return { target: undefined, message: '' };
+  const flagMatch = text.match(/^--(?:en|to|target)\s+(\S+)\s+([\s\S]+)$/);
+  if (flagMatch) {
+    return { target: flagMatch[1], message: flagMatch[2].trim() };
+  }
+  return { target: undefined, message: text };
 }
