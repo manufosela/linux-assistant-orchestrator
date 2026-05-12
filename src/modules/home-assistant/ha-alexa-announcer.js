@@ -99,13 +99,71 @@ export function createAlexaAnnouncer({ haClient, logger }) {
  * @returns {string}
  */
 function resolveTargetSuffix(rawTarget) {
-  const normalised = rawTarget
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '');
+  const normalised = normaliseAlias(rawTarget);
   if (TARGET_ALIASES[normalised]) return TARGET_ALIASES[normalised];
   // Allow the user to pass the full service name (alexa_media_foo) or the suffix (foo).
   return rawTarget.replace(/^alexa_media_/, '');
+}
+
+/**
+ * Lowercases and strips accents from an alias so user-typed targets match the table regardless
+ * of case ("Salón" / "SALON" / "salon" all map to the same key).
+ *
+ * @param {string} input
+ * @returns {string}
+ */
+function normaliseAlias(input) {
+  return String(input ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '');
+}
+
+/**
+ * @param {string} input
+ * @returns {boolean}
+ */
+function isKnownAlias(input) {
+  return Object.prototype.hasOwnProperty.call(TARGET_ALIASES, normaliseAlias(input));
+}
+
+/**
+ * Parses a raw `anuncia` invocation string into `{ target, message }`.
+ *
+ * Shared by the CLI and the Telegram bot so the same input syntaxes work in both:
+ *
+ *   "mensaje completo"               → target undefined (broadcast)
+ *   "dormitorio el agua está lista"  → target "dormitorio", message "el agua está lista"
+ *   "--en dormitorio mensaje"        → flag-style, target "dormitorio"
+ *   "--to show hola"                 → flag-style (alias)
+ *
+ * The "first word = target" form only activates when the first word is a known alias; this
+ * avoids stealing the first word of an unrelated message ("hola a todos" stays as a message
+ * because "hola" is not an alias).
+ *
+ * @param {string} raw
+ * @returns {{ target: string | undefined, message: string }}
+ */
+export function parseAnnounceInvocation(raw) {
+  const text = String(raw ?? '').trim();
+  if (!text) return { target: undefined, message: '' };
+
+  // Flag-style: --en/--to/--target <target> <message...>
+  const flagMatch = text.match(/^--(?:en|to|target)\s+(\S+)\s+([\s\S]+)$/);
+  if (flagMatch) {
+    return { target: flagMatch[1], message: flagMatch[2].trim() };
+  }
+
+  // Natural: first word matches a known alias
+  const firstSpace = text.search(/\s/);
+  if (firstSpace !== -1) {
+    const first = text.slice(0, firstSpace);
+    if (isKnownAlias(first)) {
+      return { target: first, message: text.slice(firstSpace + 1).trim() };
+    }
+  }
+
+  return { target: undefined, message: text };
 }
 
 /**

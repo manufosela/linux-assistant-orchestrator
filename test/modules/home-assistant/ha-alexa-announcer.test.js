@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createAlexaAnnouncer } from '../../../src/modules/home-assistant/ha-alexa-announcer.js';
+import { createAlexaAnnouncer, parseAnnounceInvocation } from '../../../src/modules/home-assistant/ha-alexa-announcer.js';
 
 function stubHaClient() {
   const calls = [];
@@ -119,5 +119,59 @@ describe('createAlexaAnnouncer', () => {
     assert.ok(aliases.includes('salon'));
     assert.ok(aliases.includes('casa'));
     assert.deepEqual([...aliases].sort(), aliases);
+  });
+});
+
+describe('parseAnnounceInvocation', () => {
+  it('returns broadcast when message has no alias prefix', () => {
+    const r = parseAnnounceInvocation('hola a todos');
+    assert.equal(r.target, undefined);
+    assert.equal(r.message, 'hola a todos');
+  });
+
+  it('detects alias as first word', () => {
+    const r = parseAnnounceInvocation('dormitorio el agua está lista');
+    assert.equal(r.target, 'dormitorio');
+    assert.equal(r.message, 'el agua está lista');
+  });
+
+  it('detects alias with accent as first word', () => {
+    const r = parseAnnounceInvocation('Salón vamos a cenar');
+    assert.equal(r.target, 'Salón');
+    assert.equal(r.message, 'vamos a cenar');
+  });
+
+  it('flag-style --en X mensaje takes precedence', () => {
+    const r = parseAnnounceInvocation('--en show Mánu llamada');
+    assert.equal(r.target, 'show');
+    assert.equal(r.message, 'Mánu llamada');
+  });
+
+  it('supports --to and --target aliases', () => {
+    assert.equal(parseAnnounceInvocation('--to dormitorio agua').target, 'dormitorio');
+    assert.equal(parseAnnounceInvocation('--target cocina cena').target, 'cocina');
+  });
+
+  it('does NOT steal first word when it is not a known alias', () => {
+    const r = parseAnnounceInvocation('hola a todos');
+    assert.equal(r.target, undefined);
+    assert.equal(r.message, 'hola a todos');
+  });
+
+  it('empty input returns empty parts', () => {
+    const r = parseAnnounceInvocation('');
+    assert.equal(r.target, undefined);
+    assert.equal(r.message, '');
+  });
+
+  it('null / undefined safe', () => {
+    assert.deepEqual(parseAnnounceInvocation(null), { target: undefined, message: '' });
+    assert.deepEqual(parseAnnounceInvocation(undefined), { target: undefined, message: '' });
+  });
+
+  it('preserves newlines in message', () => {
+    const r = parseAnnounceInvocation('salon linea1\nlinea2');
+    assert.equal(r.target, 'salon');
+    assert.equal(r.message, 'linea1\nlinea2');
   });
 });

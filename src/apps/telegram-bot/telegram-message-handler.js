@@ -1,5 +1,6 @@
 import { createConversationManager } from '../cli/conversation-manager.js';
 import { createThinkingIndicator } from './thinking-indicator.js';
+import { parseAnnounceInvocation } from '../../modules/home-assistant/ha-alexa-announcer.js';
 
 const SYSTEM_PROMPT =
   'Eres luis, un asistente local privado en Telegram. Responde con precisión y brevedad. ' +
@@ -233,12 +234,12 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
   router.register('/anuncia', async (message) => {
     const chatId = message.chat.id;
     const raw = extractArgs(message.text ?? '');
-    const parsed = parseAnnounceArgs(raw);
+    const parsed = parseAnnounceInvocation(raw);
 
     if (!parsed.message) {
       await bot.sendMessage(
         chatId,
-        'Uso: /anuncia [--en &lt;salon|dormitorio|cocina|show|pop|pueblo|casa|firetv&gt;] &lt;mensaje&gt;',
+        'Uso: /anuncia [&lt;destino&gt;] &lt;mensaje&gt;\n  destino: salon | dormitorio | cocina | show | pop | pueblo | casa | firetv\n  ejemplos:\n  /anuncia dormitorio el agua está lista\n  /anuncia hola a todos',
         { parse_mode: 'HTML' },
       );
       return;
@@ -272,7 +273,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '/fetch &lt;url&gt; — descargar URL al contexto',
       '/search &lt;query&gt; — buscar en la web',
       '/ha &lt;texto&gt; — pedir algo a Home Assistant',
-      '/anuncia [--en &lt;destino&gt;] &lt;texto&gt; — anuncio hablado en Alexa',
+      '/anuncia [&lt;destino&gt;] &lt;texto&gt; — anuncio hablado en Alexa',
       '/reset — borrar la conversación',
       '/status — estado del asistente',
       '/llm_status — estado del LLM',
@@ -321,25 +322,3 @@ function escapeHtml(input) {
     .replace(/>/g, '&gt;');
 }
 
-/**
- * Parses the argument string of `/anuncia` into `{ target, message }`.
- *
- * Supported syntaxes:
- *   /anuncia mensaje completo aqui                  → broadcast a casa
- *   /anuncia --en salon mensaje                     → solo al salón
- *   /anuncia --to dormitorio mensaje                → alias en inglés
- *
- * The flag must come before the message text. Quotes around the message are not required.
- *
- * @param {string} raw - everything after the `/anuncia` token
- * @returns {{ target: string | undefined, message: string }}
- */
-function parseAnnounceArgs(raw) {
-  const text = String(raw ?? '').trim();
-  if (!text) return { target: undefined, message: '' };
-  const flagMatch = text.match(/^--(?:en|to|target)\s+(\S+)\s+([\s\S]+)$/);
-  if (flagMatch) {
-    return { target: flagMatch[1], message: flagMatch[2].trim() };
-  }
-  return { target: undefined, message: text };
-}

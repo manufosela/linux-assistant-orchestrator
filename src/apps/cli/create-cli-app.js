@@ -2,6 +2,7 @@ import { createCliCommandRouter } from './cli-command-router.js';
 import { createInteractiveCliSession } from './interactive-cli-session.js';
 import { createTerminalRenderer } from './terminal-renderer.js';
 import { formatLlmError } from './llm-error-formatter.js';
+import { parseAnnounceInvocation } from '../../modules/home-assistant/ha-alexa-announcer.js';
 
 /**
  * Composition root for the CLI application.
@@ -240,22 +241,30 @@ function registerCommands(deps) {
   }, { description: 'Send a natural-language command to Home Assistant' });
 
   router.register('anuncia', async ({ args, flags, renderer }) => {
-    const message = args.join(' ').trim();
-    if (!message) {
-      renderer.error('Uso: luis anuncia "mensaje" [--en <salon|dormitorio|cocina|show|pop|pueblo|casa|firetv>]');
-      return { exitCode: 1 };
-    }
-    if (!alexaAnnouncer) {
-      renderer.error('Anuncios Alexa no configurados. Necesita Home Assistant + integración alexa_media_player en ~/.config/luis/config.json.');
-      return { exitCode: 1 };
-    }
-    const target = typeof flags.en === 'string'
+    // Flag explícito gana sobre el parsing natural.
+    const explicitTarget = typeof flags.en === 'string'
       ? flags.en
       : typeof flags.to === 'string'
         ? flags.to
         : typeof flags.target === 'string'
           ? flags.target
           : undefined;
+
+    const rawText = args.join(' ').trim();
+    const parsed = parseAnnounceInvocation(rawText);
+
+    const target = explicitTarget ?? parsed.target;
+    const message = explicitTarget ? rawText : parsed.message;
+
+    if (!message) {
+      renderer.error('Uso: luis anuncia [<destino>] "mensaje"   (destino: salon | dormitorio | cocina | show | pop | pueblo | casa | firetv)');
+      return { exitCode: 1 };
+    }
+    if (!alexaAnnouncer) {
+      renderer.error('Anuncios Alexa no configurados. Necesita Home Assistant + integración alexa_media_player en ~/.config/luis/config.json.');
+      return { exitCode: 1 };
+    }
+
     try {
       const result = await alexaAnnouncer.announce(message, { target });
       renderer.print(`📣 Anunciado vía ${result.service}.`);
