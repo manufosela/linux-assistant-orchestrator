@@ -2,7 +2,7 @@ import { createCliCommandRouter } from './cli-command-router.js';
 import { createInteractiveCliSession } from './interactive-cli-session.js';
 import { createTerminalRenderer } from './terminal-renderer.js';
 import { formatLlmError } from './llm-error-formatter.js';
-import { parseAnnounceInvocation } from '../../modules/home-assistant/ha-alexa-announcer.js';
+import { parseAnnounceInvocation, listTargetChoices } from '../../modules/home-assistant/ha-alexa-announcer.js';
 
 /**
  * Composition root for the CLI application.
@@ -257,11 +257,23 @@ function registerCommands(deps) {
     const message = explicitTarget ? rawText : parsed.message;
 
     if (!message) {
-      renderer.error('Uso: luis anuncia [<destino>] "mensaje"   (destino: salon | dormitorio | cocina | show | pop | pueblo | casa | firetv)');
+      const list = listTargetChoices().map((c) => c.alias).join(' | ');
+      renderer.error(`Uso: luis anuncia <destino> "mensaje"   (destino: ${list})`);
       return { exitCode: 1 };
     }
     if (!alexaAnnouncer) {
       renderer.error('Anuncios Alexa no configurados. Necesita Home Assistant + integración alexa_media_player en ~/.config/luis/config.json.');
+      return { exitCode: 1 };
+    }
+    if (!target) {
+      // Por seguridad: si no se indica destino, NO emitimos broadcast por defecto.
+      // El usuario debe escribir explícitamente "casa" si quiere todos.
+      const list = listTargetChoices()
+        .map((c) => `  ${c.emoji} ${c.alias} — ${c.label}`)
+        .join('\n');
+      renderer.error(
+        `Falta el destino. Indica dónde quieres que suene:\n${list}\n\nEjemplos:\n  luis anuncia salon vamos a cenar\n  luis anuncia casa atención todos`,
+      );
       return { exitCode: 1 };
     }
 

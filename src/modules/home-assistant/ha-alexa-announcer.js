@@ -149,7 +149,9 @@ export function parseAnnounceInvocation(raw) {
   if (!text) return { target: undefined, message: '' };
 
   // Flag-style: --en/--to/--target <target> <message...>
-  const flagMatch = text.match(/^--(?:en|to|target)\s+(\S+)\s+([\s\S]+)$/);
+  // Acepta varias formas del prefijo porque los teclados móviles (incluido el de Telegram)
+  // suelen autocorregir "--" a un guión largo "—" (em-dash, U+2014) o a "–" (en-dash, U+2013).
+  const flagMatch = text.match(/^(?:--|—|–|-)(?:en|to|target)\s+(\S+)\s+([\s\S]+)$/);
   if (flagMatch) {
     return { target: flagMatch[1], message: flagMatch[2].trim() };
   }
@@ -164,6 +166,25 @@ export function parseAnnounceInvocation(raw) {
   }
 
   return { target: undefined, message: text };
+}
+
+/**
+ * Returns the list of aliases users can pick when no target is given. Ordered for friendly
+ * display (rooms first, then global). Each tuple is `[alias, label, emoji]`.
+ *
+ * @returns {Array<{ alias: string, label: string, emoji: string }>}
+ */
+export function listTargetChoices() {
+  return [
+    { alias: 'salon', label: 'Salón', emoji: '🛋️' },
+    { alias: 'dormitorio', label: 'Dormitorio', emoji: '🛏️' },
+    { alias: 'cocina', label: 'Cocina', emoji: '🍳' },
+    { alias: 'show', label: 'Echo Show', emoji: '📺' },
+    { alias: 'pop', label: 'Echo Pop', emoji: '🎵' },
+    { alias: 'pueblo', label: 'Pueblo', emoji: '🏡' },
+    { alias: 'firetv', label: 'Fire TV', emoji: '📡' },
+    { alias: 'casa', label: 'Toda la casa', emoji: '🏠' },
+  ];
 }
 
 /**
