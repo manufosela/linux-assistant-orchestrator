@@ -21,6 +21,7 @@ import { createWebSearchService } from './modules/web/web-search.js';
 import { createHomeAssistantClient } from './modules/home-assistant/ha-client.js';
 import { createHomeAssistantStateCache } from './modules/home-assistant/ha-state-cache.js';
 import { createSmartHomeAssistantClient } from './modules/home-assistant/ha-smart-client.js';
+import { createAlexaAnnouncer } from './modules/home-assistant/ha-alexa-announcer.js';
 
 const startTime = new Date();
 
@@ -119,6 +120,7 @@ async function main() {
 
   let homeAssistant;
   let homeAssistantStateCache;
+  let alexaAnnouncer;
   if (config.homeAssistant.baseUrl && config.homeAssistant.token) {
     const baseClient = createHomeAssistantClient({
       baseUrl: config.homeAssistant.baseUrl,
@@ -140,6 +142,7 @@ async function main() {
       stateCache: homeAssistantStateCache,
       logger,
     });
+    alexaAnnouncer = createAlexaAnnouncer({ haClient: baseClient, logger });
   }
 
   // Telegram bot
@@ -161,6 +164,7 @@ async function main() {
       urlFetcher,
       webSearch,
       homeAssistant,
+      alexaAnnouncer,
       router,
       logger,
     });

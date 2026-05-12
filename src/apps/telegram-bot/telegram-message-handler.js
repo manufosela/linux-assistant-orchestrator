@@ -1,5 +1,6 @@
 import { createConversationManager } from '../cli/conversation-manager.js';
 import { createThinkingIndicator } from './thinking-indicator.js';
+import { parseAnnounceInvocation } from '../../modules/home-assistant/ha-alexa-announcer.js';
 
 const SYSTEM_PROMPT =
   'Eres luis, un asistente local privado en Telegram. Responde con precisión y brevedad. ' +
@@ -23,7 +24,7 @@ const SYSTEM_PROMPT =
  * @param {import('pino').Logger} deps.logger
  * @returns {void}
  */
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -230,6 +231,37 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     }
   });
 
+  router.register('/anuncia', async (message) => {
+    const chatId = message.chat.id;
+    const raw = extractArgs(message.text ?? '');
+    const parsed = parseAnnounceInvocation(raw);
+
+    if (!parsed.message) {
+      await bot.sendMessage(
+        chatId,
+        'Uso: /anuncia [&lt;destino&gt;] &lt;mensaje&gt;\n  destino: salon | dormitorio | cocina | show | pop | pueblo | casa | firetv\n  ejemplos:\n  /anuncia dormitorio el agua está lista\n  /anuncia hola a todos',
+        { parse_mode: 'HTML' },
+      );
+      return;
+    }
+    if (!alexaAnnouncer) {
+      await bot.sendMessage(chatId, 'Anuncios Alexa no configurados.');
+      return;
+    }
+
+    const indicator = await createThinkingIndicator(bot, chatId, {
+      text: '📣 Enviando anuncio…',
+      logger,
+    });
+    try {
+      const result = await alexaAnnouncer.announce(parsed.message, { target: parsed.target });
+      await indicator.finish(`📣 Anunciado en ${result.target} (${result.service}).`);
+    } catch (error) {
+      logger.warn({ chatId, err: error.message, target: parsed.target }, '/anuncia failed');
+      await indicator.finish(`❌ No pude anunciar: ${error.message}`);
+    }
+  });
+
   router.register('/help', async (message) => {
     const chatId = message.chat.id;
     const text = [
@@ -241,6 +273,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '/fetch &lt;url&gt; — descargar URL al contexto',
       '/search &lt;query&gt; — buscar en la web',
       '/ha &lt;texto&gt; — pedir algo a Home Assistant',
+      '/anuncia [&lt;destino&gt;] &lt;texto&gt; — anuncio hablado en Alexa',
       '/reset — borrar la conversación',
       '/status — estado del asistente',
       '/llm_status — estado del LLM',
@@ -288,3 +321,4 @@ function escapeHtml(input) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 }
+
