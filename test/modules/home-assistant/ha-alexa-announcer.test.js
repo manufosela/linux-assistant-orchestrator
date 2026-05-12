@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createAlexaAnnouncer, parseAnnounceInvocation } from '../../../src/modules/home-assistant/ha-alexa-announcer.js';
+import { createAlexaAnnouncer, parseAnnounceInvocation, listTargetChoices } from '../../../src/modules/home-assistant/ha-alexa-announcer.js';
 
 function stubHaClient() {
   const calls = [];
@@ -173,5 +173,42 @@ describe('parseAnnounceInvocation', () => {
     const r = parseAnnounceInvocation('salon linea1\nlinea2');
     assert.equal(r.target, 'salon');
     assert.equal(r.message, 'linea1\nlinea2');
+  });
+
+  it('accepts em-dash prefix (—en) because mobile keyboards autocorrect -- to —', () => {
+    const r = parseAnnounceInvocation('—en dormitorio mensaje');
+    assert.equal(r.target, 'dormitorio');
+    assert.equal(r.message, 'mensaje');
+  });
+
+  it('accepts en-dash prefix (–en)', () => {
+    const r = parseAnnounceInvocation('–en salon hola');
+    assert.equal(r.target, 'salon');
+    assert.equal(r.message, 'hola');
+  });
+
+  it('accepts single dash prefix (-en) for tolerance', () => {
+    const r = parseAnnounceInvocation('-en show texto');
+    assert.equal(r.target, 'show');
+    assert.equal(r.message, 'texto');
+  });
+});
+
+describe('listTargetChoices', () => {
+  it('returns the 8 destinations including broadcast (casa)', () => {
+    const choices = listTargetChoices();
+    assert.equal(choices.length, 8);
+    const aliases = choices.map((c) => c.alias);
+    assert.ok(aliases.includes('salon'));
+    assert.ok(aliases.includes('casa'));
+    assert.ok(aliases.includes('firetv'));
+  });
+
+  it('every choice has alias, label and emoji', () => {
+    for (const c of listTargetChoices()) {
+      assert.ok(c.alias, 'alias');
+      assert.ok(c.label, 'label');
+      assert.ok(c.emoji, 'emoji');
+    }
   });
 });

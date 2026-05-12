@@ -1,6 +1,10 @@
 import { createConversationManager } from '../cli/conversation-manager.js';
 import { createThinkingIndicator } from './thinking-indicator.js';
-import { parseAnnounceInvocation } from '../../modules/home-assistant/ha-alexa-announcer.js';
+import { parseAnnounceInvocation, listTargetChoices } from '../../modules/home-assistant/ha-alexa-announcer.js';
+
+const ANNOUNCE_PENDING_TTL_MS = 5 * 60 * 1000;
+const ANNOUNCE_CALLBACK_PREFIX = 'anuncia:';
+const ANNOUNCE_CANCEL_CHOICE = '_cancel';
 
 const SYSTEM_PROMPT =
   'Eres luis, un asistente local privado en Telegram. Responde con precisión y brevedad. ' +
@@ -29,6 +33,8 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
   const haConversationByChat = new Map();
+  /** @type {Map<number|string, { message: string, expiresAt: number }>} */
+  const pendingAnnouncements = new Map();
 
   /**
    * Returns the per-chat conversation manager, creating it on first use.
@@ -239,7 +245,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     if (!parsed.message) {
       await bot.sendMessage(
         chatId,
-        'Uso: /anuncia [&lt;destino&gt;] &lt;mensaje&gt;\n  destino: salon | dormitorio | cocina | show | pop | pueblo | casa | firetv\n  ejemplos:\n  /anuncia dormitorio el agua está lista\n  /anuncia hola a todos',
+        'Uso: /anuncia &lt;destino&gt; &lt;mensaje&gt;   o   /anuncia &lt;mensaje&gt;\n\nSi no indicas destino, te muestro los Echos disponibles para elegir.\n\nEjemplos:\n  /anuncia dormitorio el agua está lista\n  /anuncia casa atención a todos\n  /anuncia hola (te preguntará dónde)',
         { parse_mode: 'HTML' },
       );
       return;
@@ -249,6 +255,21 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       return;
     }
 
+    // Sin destino: guardar y mostrar keyboard. NUNCA hacemos broadcast por defecto.
+    if (!parsed.target) {
+      pendingAnnouncements.set(chatId, {
+        message: parsed.message,
+        expiresAt: Date.now() + ANNOUNCE_PENDING_TTL_MS,
+      });
+      await bot.sendMessage(
+        chatId,
+        `¿Dónde quieres anunciarlo?\n\n<i>${escapeHtml(parsed.message)}</i>`,
+        { parse_mode: 'HTML', reply_markup: buildAnnounceKeyboard() },
+      );
+      return;
+    }
+
+    // Destino explícito: ejecutar inmediato con indicador.
     const indicator = await createThinkingIndicator(bot, chatId, {
       text: '📣 Enviando anuncio…',
       logger,
@@ -259,6 +280,70 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     } catch (error) {
       logger.warn({ chatId, err: error.message, target: parsed.target }, '/anuncia failed');
       await indicator.finish(`❌ No pude anunciar: ${error.message}`);
+    }
+  });
+
+  // Handler de los botones inline del /anuncia. Telegram emite callback_query cuando el usuario
+  // pulsa un botón; solo nos interesan los que llevan el prefijo "anuncia:".
+  bot.on('callback_query', async (callbackQuery) => {
+    try {
+      const data = callbackQuery.data ?? '';
+      if (!data.startsWith(ANNOUNCE_CALLBACK_PREFIX)) return;
+
+      const chatId = callbackQuery.message?.chat?.id;
+      const messageId = callbackQuery.message?.message_id;
+      if (!chatId || !messageId) {
+        await bot.answerCallbackQuery(callbackQuery.id).catch(() => {});
+        return;
+      }
+
+      const choice = data.slice(ANNOUNCE_CALLBACK_PREFIX.length);
+      const pending = pendingAnnouncements.get(chatId);
+
+      if (!pending || pending.expiresAt < Date.now()) {
+        pendingAnnouncements.delete(chatId);
+        await bot.editMessageText('⌛ El anuncio expiró. Vuelve a escribir /anuncia.', {
+          chat_id: chatId,
+          message_id: messageId,
+        }).catch(() => {});
+        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Expirado' }).catch(() => {});
+        return;
+      }
+
+      if (choice === ANNOUNCE_CANCEL_CHOICE) {
+        pendingAnnouncements.delete(chatId);
+        await bot.editMessageText('❌ Anuncio cancelado.', {
+          chat_id: chatId,
+          message_id: messageId,
+        }).catch(() => {});
+        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Cancelado' }).catch(() => {});
+        return;
+      }
+
+      pendingAnnouncements.delete(chatId);
+
+      // Acuse de recibo del click (Telegram quita el "loading" en el botón).
+      await bot.answerCallbackQuery(callbackQuery.id).catch(() => {});
+      await bot.editMessageText(`📣 Enviando anuncio a ${choice}…`, {
+        chat_id: chatId,
+        message_id: messageId,
+      }).catch(() => {});
+
+      try {
+        const result = await alexaAnnouncer.announce(pending.message, { target: choice });
+        await bot.editMessageText(
+          `📣 Anunciado en ${result.target} (${result.service}).\n\n<i>${escapeHtml(pending.message)}</i>`,
+          { chat_id: chatId, message_id: messageId, parse_mode: 'HTML' },
+        ).catch(() => {});
+      } catch (error) {
+        logger.warn({ chatId, err: error.message, target: choice }, '/anuncia callback failed');
+        await bot.editMessageText(`❌ No pude anunciar: ${error.message}`, {
+          chat_id: chatId,
+          message_id: messageId,
+        }).catch(() => {});
+      }
+    } catch (error) {
+      logger.error({ err: error?.message }, 'callback_query handler crashed');
     }
   });
 
@@ -273,7 +358,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '/fetch &lt;url&gt; — descargar URL al contexto',
       '/search &lt;query&gt; — buscar en la web',
       '/ha &lt;texto&gt; — pedir algo a Home Assistant',
-      '/anuncia [&lt;destino&gt;] &lt;texto&gt; — anuncio hablado en Alexa',
+      '/anuncia &lt;destino&gt; &lt;texto&gt; — anuncio en Alexa (o sin destino para elegir)',
       '/reset — borrar la conversación',
       '/status — estado del asistente',
       '/llm_status — estado del LLM',
@@ -320,5 +405,25 @@ function escapeHtml(input) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+/**
+ * Builds the inline keyboard shown by /anuncia when no destination was specified.
+ * Layout: 2 columns × 4 rows of destinations + a Cancel row at the bottom.
+ *
+ * @returns {{ inline_keyboard: Array<Array<{ text: string, callback_data: string }>> }}
+ */
+function buildAnnounceKeyboard() {
+  const choices = listTargetChoices();
+  const rows = [];
+  for (let i = 0; i < choices.length; i += 2) {
+    const left = choices[i];
+    const right = choices[i + 1];
+    const row = [{ text: `${left.emoji} ${left.label}`, callback_data: `${ANNOUNCE_CALLBACK_PREFIX}${left.alias}` }];
+    if (right) row.push({ text: `${right.emoji} ${right.label}`, callback_data: `${ANNOUNCE_CALLBACK_PREFIX}${right.alias}` });
+    rows.push(row);
+  }
+  rows.push([{ text: '❌ Cancelar', callback_data: `${ANNOUNCE_CALLBACK_PREFIX}${ANNOUNCE_CANCEL_CHOICE}` }]);
+  return { inline_keyboard: rows };
 }
 
