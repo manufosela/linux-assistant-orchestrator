@@ -77,6 +77,8 @@ const ENV_MAP = [
   ['homeAssistant.token', 'HA_TOKEN'],
   ['homeAssistant.language', 'HA_LANGUAGE'],
   ['homeAssistant.agentId', 'HA_AGENT_ID'],
+  ['google.credentialsPath', 'GOOGLE_CREDENTIALS_PATH'],
+  ['google.tokensPath', 'GOOGLE_TOKENS_PATH'],
 ];
 
 /**

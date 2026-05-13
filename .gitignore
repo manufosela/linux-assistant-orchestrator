@@ -6,3 +6,8 @@
 node_modules/
 config/download-rules.json
 
+
+# Google OAuth2 (NUNCA commitear)
+credentials.json
+google-tokens.json
+data/google-tokens.json

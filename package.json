@@ -16,6 +16,7 @@
   "dependencies": {
     "chokidar": "^3.6.0",
     "dotenv": "^16.4.5",
+    "googleapis": "^171.4.0",
     "node-telegram-bot-api": "^0.66.0",
     "pino": "^9.3.2",
     "pino-pretty": "^11.2.2"
