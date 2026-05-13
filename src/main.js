@@ -22,6 +22,8 @@ import { createHomeAssistantClient } from './modules/home-assistant/ha-client.js
 import { createHomeAssistantStateCache } from './modules/home-assistant/ha-state-cache.js';
 import { createSmartHomeAssistantClient } from './modules/home-assistant/ha-smart-client.js';
 import { createAlexaAnnouncer } from './modules/home-assistant/ha-alexa-announcer.js';
+import { createGoogleAuth } from './modules/google/google-auth.js';
+import { createGmailClient } from './modules/email/gmail-client.js';
 
 const startTime = new Date();
 
@@ -145,6 +147,17 @@ async function main() {
     alexaAnnouncer = createAlexaAnnouncer({ haClient: baseClient, logger });
   }
 
+  let googleAuth;
+  let gmailClient;
+  if (config.google.credentialsPath && config.google.tokensPath) {
+    googleAuth = createGoogleAuth({
+      credentialsPath: config.google.credentialsPath,
+      tokensPath: config.google.tokensPath,
+      logger,
+    });
+    gmailClient = createGmailClient({ googleAuth, llmService, logger });
+  }
+
   // Telegram bot
   let bot = null;
   let telegramStop = async () => {};
@@ -165,6 +178,7 @@ async function main() {
       webSearch,
       homeAssistant,
       alexaAnnouncer,
+      gmailClient,
       router,
       logger,
     });

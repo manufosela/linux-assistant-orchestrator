@@ -17,6 +17,7 @@ import { createHomeAssistantStateCache } from '../../../modules/home-assistant/h
 import { createSmartHomeAssistantClient } from '../../../modules/home-assistant/ha-smart-client.js';
 import { createAlexaAnnouncer } from '../../../modules/home-assistant/ha-alexa-announcer.js';
 import { createGoogleAuth } from '../../../modules/google/google-auth.js';
+import { createGmailClient } from '../../../modules/email/gmail-client.js';
 import { createCliApp } from '../create-cli-app.js';
 import { loadUserConfig } from '../user-config-loader.js';
 
@@ -130,12 +131,14 @@ async function main() {
   });
 
   let googleAuth;
+  let gmailClient;
   if (config.google.credentialsPath && config.google.tokensPath) {
     googleAuth = createGoogleAuth({
       credentialsPath: config.google.credentialsPath,
       tokensPath: config.google.tokensPath,
       logger,
     });
+    gmailClient = createGmailClient({ googleAuth, llmService, logger });
   }
 
   const app = createCliApp({
@@ -148,6 +151,7 @@ async function main() {
     homeAssistant,
     alexaAnnouncer,
     googleAuth,
+    gmailClient,
     logger,
     appName: APP_NAME,
     appVersion: pkg.version,
