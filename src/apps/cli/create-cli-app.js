@@ -82,7 +82,7 @@ export function createCliApp(deps) {
  * }} deps
  */
 function registerCommands(deps) {
-  const { router, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, googleAuth, logger, remoteCodeTasksEnabled } = deps;
+  const { router, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, googleAuth, gmailClient, logger, remoteCodeTasksEnabled } = deps;
 
   router.register('status', async ({ renderer }) => {
     const status = statusService.getStatus();
@@ -127,9 +127,61 @@ function registerCommands(deps) {
     return { exitCode: 0 };
   }, { description: 'Run the downloads organizer (placeholder until the service is wired)' });
 
-  router.register('mail summary', async ({ renderer }) => {
-    renderer.warning('Email integration is not implemented yet.');
-  }, { description: 'Summarize email (not implemented yet)' });
+  router.register('mail today', async ({ flags, renderer }) => {
+    if (!gmailClient) {
+      renderer.error('Gmail no configurado. Ejecuta `luis google login` primero y comprueba que google.credentialsPath / google.tokensPath están en la config.');
+      return { exitCode: 1 };
+    }
+    try {
+      const maxResults = Number(flags.max ?? flags.limit ?? 10) || 10;
+      const emails = await gmailClient.unreadToday({ maxResults });
+      if (emails.length === 0) {
+        renderer.print('No tienes correos no leídos de hoy.');
+        return { exitCode: 0 };
+      }
+      renderEmailList(renderer, emails);
+      if (flags.summary && llmService) {
+        renderer.print('');
+        renderer.info('Resumiendo con el LLM…');
+        const summary = await gmailClient.summarize(emails);
+        if (summary) {
+          renderer.print('');
+          renderer.print(summary);
+        }
+      }
+      return { exitCode: 0 };
+    } catch (error) {
+      logger.warn({ err: error?.message }, 'CLI mail today failed');
+      renderer.error(`Mail today: ${error?.message ?? 'error desconocido'}`);
+      return { exitCode: 1 };
+    }
+  }, { description: 'Lista los correos no leídos de hoy (--summary para resumir con el LLM)' });
+
+  router.register('mail from', async ({ args, flags, renderer }) => {
+    const sender = args.join(' ').trim();
+    if (!sender) {
+      renderer.error('Uso: luis mail from <remitente>   (nombre, email parcial o dominio)');
+      return { exitCode: 1 };
+    }
+    if (!gmailClient) {
+      renderer.error('Gmail no configurado. Ejecuta `luis google login` primero.');
+      return { exitCode: 1 };
+    }
+    try {
+      const maxResults = Number(flags.max ?? flags.limit ?? 10) || 10;
+      const emails = await gmailClient.fromSender({ sender, maxResults });
+      if (emails.length === 0) {
+        renderer.print(`No encuentro correos de "${sender}".`);
+        return { exitCode: 0 };
+      }
+      renderEmailList(renderer, emails);
+      return { exitCode: 0 };
+    } catch (error) {
+      logger.warn({ err: error?.message, sender }, 'CLI mail from failed');
+      renderer.error(`Mail from: ${error?.message ?? 'error desconocido'}`);
+      return { exitCode: 1 };
+    }
+  }, { description: 'Lista correos de un remitente concreto (luis mail from "banco")' });
 
   router.register('calendar today', async ({ renderer }) => {
     renderer.warning('Calendar integration is not implemented yet.');
@@ -344,6 +396,23 @@ function registerCommands(deps) {
   router.register('help', async () => {
     router.printHelp();
   }, { description: 'Show this help' });
+}
+
+/**
+ * Renders a list of email summaries in plain text. Used by both `luis mail today` and
+ * `luis mail from`. One block per email separated by blank lines.
+ *
+ * @param {import('./terminal-renderer.js').TerminalRenderer} renderer
+ * @param {import('../../modules/email/gmail-client.js').EmailSummary[]} emails
+ */
+function renderEmailList(renderer, emails) {
+  emails.forEach((email, i) => {
+    if (i > 0) renderer.print('');
+    renderer.print(`${i + 1}. ${email.subject || '(sin asunto)'}`);
+    renderer.print(`   De:    ${email.from || '(desconocido)'}`);
+    if (email.date) renderer.print(`   Fecha: ${email.date}`);
+    if (email.snippet) renderer.print(`   ${email.snippet}`);
+  });
 }
 
 /**

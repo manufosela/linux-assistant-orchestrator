@@ -1,6 +1,7 @@
 import { createConversationManager } from '../cli/conversation-manager.js';
 import { createThinkingIndicator } from './thinking-indicator.js';
 import { parseAnnounceInvocation, listTargetChoices } from '../../modules/home-assistant/ha-alexa-announcer.js';
+import { parseEmailIntent } from '../../modules/email/email-intent.js';
 
 const ANNOUNCE_PENDING_TTL_MS = 5 * 60 * 1000;
 const ANNOUNCE_CALLBACK_PREFIX = 'anuncia:';
@@ -28,7 +29,7 @@ const SYSTEM_PROMPT =
  * @param {import('pino').Logger} deps.logger
  * @returns {void}
  */
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, gmailClient, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -347,6 +348,23 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     }
   });
 
+  router.register('/correo', async (message) => {
+    const chatId = message.chat.id;
+    if (!gmailClient) {
+      await bot.sendMessage(chatId, 'Gmail no configurado. Hay que ejecutar `luis google login` y configurar los paths.');
+      return;
+    }
+    const args = extractArgs(message.text ?? '').trim();
+    const indicator = await createThinkingIndicator(bot, chatId, { text: '📬 Consultando Gmail…', logger });
+    try {
+      const result = await dispatchEmailRequest(args, gmailClient);
+      await indicator.finish(formatEmailReply(result), { parse_mode: 'HTML', disable_web_page_preview: true });
+    } catch (error) {
+      logger.warn({ chatId, err: error.message }, '/correo failed');
+      await indicator.finish(`❌ No pude consultar el correo: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+    }
+  });
+
   router.register('/help', async (message) => {
     const chatId = message.chat.id;
     const text = [
@@ -359,11 +377,14 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '/search &lt;query&gt; — buscar en la web',
       '/ha &lt;texto&gt; — pedir algo a Home Assistant',
       '/anuncia &lt;destino&gt; &lt;texto&gt; — anuncio en Alexa (o sin destino para elegir)',
+      '/correo [hoy|de &lt;persona&gt;] — correos no leídos de hoy o de un remitente',
       '/reset — borrar la conversación',
       '/status — estado del asistente',
       '/llm_status — estado del LLM',
       '/downloads_rules — reglas de descarga',
       '/help — esta ayuda',
+      '',
+      '<i>También entiendo en lenguaje natural: "correos de hoy", "correos de banco", etc.</i>',
     ].join('\n');
     await bot.sendMessage(chatId, text, { parse_mode: 'HTML' });
   });
@@ -372,6 +393,24 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     const chatId = message.chat.id;
     const text = (message.text ?? '').trim();
     if (!text) return;
+
+    // Antes de pasar al LLM, intentamos detectar intenciones específicas mediante regex.
+    // Si matchea (p.ej. "correos de hoy", "correos de banco"), atendemos directamente sin
+    // gastar tokens del LLM. Si no matchea, sigue el flujo normal.
+    if (gmailClient) {
+      const emailIntent = parseEmailIntent(text);
+      if (emailIntent) {
+        const indicator = await createThinkingIndicator(bot, chatId, { text: '📬 Consultando Gmail…', logger });
+        try {
+          const result = await dispatchEmailIntent(emailIntent, gmailClient);
+          await indicator.finish(formatEmailReply(result), { parse_mode: 'HTML', disable_web_page_preview: true });
+        } catch (error) {
+          logger.warn({ chatId, err: error.message }, 'email intent fallback failed');
+          await indicator.finish(`❌ No pude consultar el correo: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+        }
+        return;
+      }
+    }
 
     const conversation = getConversation(chatId);
     conversation.appendUser(text);
@@ -405,6 +444,66 @@ function escapeHtml(input) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+/**
+ * Routes the argument string of `/correo` to the right Gmail call.
+ *
+ *   ""                  → unread today
+ *   "hoy" / "today"     → unread today
+ *   "de <persona>"      → from sender
+ *   "from <persona>"    → from sender
+ *   "<persona>"         → from sender (resto del texto como remitente)
+ *
+ * @param {string} args
+ * @param {import('../../modules/email/gmail-client.js').GmailClient} client
+ * @returns {Promise<{ kind: 'today' | 'from', sender?: string, emails: import('../../modules/email/gmail-client.js').EmailSummary[] }>}
+ */
+async function dispatchEmailRequest(args, client) {
+  const trimmed = args.trim();
+  if (!trimmed || /^(?:hoy|today|pendientes?)$/i.test(trimmed)) {
+    return { kind: 'today', emails: await client.unreadToday() };
+  }
+  const fromMatch = trimmed.match(/^(?:de|from)\s+(.+)$/i);
+  const sender = fromMatch ? fromMatch[1].trim() : trimmed;
+  return { kind: 'from', sender, emails: await client.fromSender({ sender }) };
+}
+
+/**
+ * Variant of dispatchEmailRequest that accepts the typed intent from parseEmailIntent.
+ *
+ * @param {import('../../modules/email/email-intent.js').EmailIntent} intent
+ * @param {import('../../modules/email/gmail-client.js').GmailClient} client
+ */
+async function dispatchEmailIntent(intent, client) {
+  if (intent.intent === 'today') {
+    return { kind: 'today', emails: await client.unreadToday() };
+  }
+  return { kind: 'from', sender: intent.sender, emails: await client.fromSender({ sender: intent.sender }) };
+}
+
+/**
+ * Renders the result of dispatchEmailRequest as Telegram-friendly HTML.
+ *
+ * @param {{ kind: 'today' | 'from', sender?: string, emails: import('../../modules/email/gmail-client.js').EmailSummary[] }} result
+ * @returns {string}
+ */
+function formatEmailReply(result) {
+  if (result.emails.length === 0) {
+    return result.kind === 'today'
+      ? '📭 No tienes correos no leídos de hoy.'
+      : `📭 No encuentro correos de "${escapeHtml(result.sender ?? '')}".`;
+  }
+  const heading = result.kind === 'today'
+    ? `📬 <b>${result.emails.length} correo${result.emails.length === 1 ? '' : 's'} no leído${result.emails.length === 1 ? '' : 's'}:</b>`
+    : `📬 <b>${result.emails.length} correo${result.emails.length === 1 ? '' : 's'} de "${escapeHtml(result.sender ?? '')}":</b>`;
+  const lines = result.emails.map((email, i) => {
+    const subject = escapeHtml(email.subject || '(sin asunto)');
+    const from = escapeHtml(email.from || '(desconocido)');
+    const snippet = escapeHtml(email.snippet || '');
+    return `${i + 1}. <b>${subject}</b>\n   <i>${from}</i>${snippet ? `\n   ${snippet}` : ''}`;
+  });
+  return `${heading}\n\n${lines.join('\n\n')}`;
 }
 
 /**
