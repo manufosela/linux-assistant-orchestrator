@@ -17,6 +17,12 @@ services:
     restart: unless-stopped
     ports:
       - "${WEB_PUBLISHED_PORT:-3030}:3000"
+    # Inject the whole .env into the container. New variables only need to be
+    # added to .env — no need to also list them under `environment:` below.
+    # (Entries in `environment:` still win over env_file when both set a key.)
+    env_file:
+      - path: .env
+        required: false
     environment:
       NODE_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-info}
