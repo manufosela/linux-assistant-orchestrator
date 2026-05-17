@@ -385,8 +385,7 @@ docker compose up -d
 The committed `docker-compose.yml` is fully parametrized (no hardcoded
 hosts/tokens). See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the full guide:
 obtaining credentials, the complete env reference, the cluster watcher
-topology, and how to update an existing deployment (`scripts/deploy.sh` or
-git-on-server).
+topology, and how to update an existing deployment (git-on-server or rsync).
 
 The assistant will:
 1. Load configuration from `.env`

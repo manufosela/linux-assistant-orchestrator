@@ -140,10 +140,20 @@ ssh <host> 'cd ~/luis && git pull && docker compose build --no-cache && docker c
 **Rsync workflow (when the server is not a git checkout):**
 
 ```bash
-DEPLOY_HOST=user@host DEPLOY_PATH=~/luis/app ./scripts/deploy.sh --rebuild
+# context = repo root; PROJECT_DIR = remote project dir (e.g. ~/app)
+rsync -azc --delete \
+  --exclude '.git' --exclude 'node_modules' --exclude '/config' \
+  ./ user@host:PROJECT_DIR/
+# then, on the server, from the dir holding docker-compose.yml:
+ssh user@host 'cd COMPOSE_DIR && docker compose build --no-cache && docker compose up -d --force-recreate'
 ```
 
-`scripts/deploy.sh` uses checksum-based, correctly-anchored excludes — do not
-hand-roll the rsync (an unanchored `--exclude config` silently skips
-`src/infrastructure/config/`, and `rsync -a` mtime quick-check can skip stale
-files; both have bitten this project).
+Two non-obvious rules, both of which have bitten this project:
+
+- Use `-c` (checksum). `rsync -a` preserves mtimes, so its default size+mtime
+  quick-check can treat a stale remote file as up to date and never send it.
+- Anchor the exclude as `/config` (leading slash = transfer root only). An
+  unanchored `--exclude config` also matches `src/infrastructure/config/` and
+  silently skips `load-config.js`.
+
+Prefer the git-on-server workflow above; it sidesteps both pitfalls entirely.
