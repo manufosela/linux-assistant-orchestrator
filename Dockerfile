@@ -1,7 +1,9 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
-RUN corepack enable
 COPY package.json pnpm-lock.yaml ./
+# Pin pnpm to package.json#packageManager (9.x — compatible with Node 20).
+# Without this, corepack downloads the latest pnpm (11.x), which requires Node >=22.13.
+RUN corepack enable && corepack prepare --activate
 RUN pnpm install --frozen-lockfile --prod
 
 FROM node:20-alpine
