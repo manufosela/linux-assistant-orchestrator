@@ -212,11 +212,15 @@ function readJsonBody(req) {
         resolveRead(undefined);
         return;
       }
+      const text = Buffer.concat(chunks).toString('utf8');
       try {
-        const text = Buffer.concat(chunks).toString('utf8');
         resolveRead(JSON.parse(text));
-      } catch (error) {
-        reject(error);
+      } catch {
+        // Inbound webhooks from tools we don't control (e.g. Watchtower via
+        // shoutrrr) may not send strict JSON. Hand the raw text to the
+        // handler instead of rejecting; JSON-only handlers still type-check
+        // their fields and reject bad input themselves.
+        resolveRead(text);
       }
     });
 
