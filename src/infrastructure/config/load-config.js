@@ -64,6 +64,12 @@ export function loadConfig(envPath = '.env') {
       notifyChatId: process.env.TELEGRAM_NOTIFY_CHAT_ID ?? '',
     },
 
+    watchtower: {
+      // Shared secret for the POST /api/hooks/watchtower webhook.
+      // Empty disables the endpoint (503).
+      webhookToken: process.env.WATCHTOWER_WEBHOOK_TOKEN ?? '',
+    },
+
     cluster: {
       enabled: process.env.CLUSTER_ENABLED !== 'false',
       // No hardcoded LAN: the node IPs are deployment-specific and must be
@@ -172,6 +178,7 @@ function validateConfig(config) {
  * @property {string} logLevel
  * @property {string} assistantName
  * @property {{ botToken: string, allowedChatIds: string[], notifyChatId: string }} telegram
+ * @property {{ webhookToken: string }} watchtower
  * @property {{ enabled: boolean, n2Ip: string, n3Ip: string, n4Ip: string, historyPath: string }} cluster
  * @property {{ watchPath: string, rulesPath: string, enableLlmClassification: boolean }} downloads
  * @property {import('../../types/llm.js').LlmConfig} llm

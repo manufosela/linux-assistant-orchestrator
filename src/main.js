@@ -247,6 +247,8 @@ async function main() {
         urlFetcher,
         webSearch,
         homeAssistant,
+        notificationService,
+        watchtowerWebhookToken: config.watchtower.webhookToken,
         logger,
         host: config.web.host,
         port: config.web.port,
