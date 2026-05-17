@@ -1,3 +1,5 @@
+import { formatWatchtowerNotification } from '../../modules/watchtower/watchtower-formatter.js';
+
 /**
  * Registers HTTP route handlers on the supplied registry.
  *
@@ -13,10 +15,12 @@
  *   urlFetcher?: import('../../modules/web/url-fetcher.js').UrlFetcher,
  *   webSearch?: import('../../modules/web/web-search.js').WebSearchService,
  *   homeAssistant?: import('../../modules/home-assistant/ha-client.js').HomeAssistantClient,
+ *   notificationService?: import('../../modules/notifications/notification-service.js').NotificationService,
+ *   watchtowerWebhookToken?: string,
  *   logger: import('pino').Logger,
  * }} deps
  */
-export function registerWebRoutes({ registry, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, logger }) {
+export function registerWebRoutes({ registry, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, notificationService, watchtowerWebhookToken, logger }) {
   registry.register('GET', '/api/status', async () => {
     const status = statusService.getStatus();
     return { status: 200, body: status };
@@ -150,6 +154,34 @@ export function registerWebRoutes({ registry, llmService, statusService, rulesRe
         message: 'Downloads organizer service is not wired to the web API yet.',
       },
     };
+  });
+
+  // Inbound webhook for Watchtower (or any updater): receives the report and
+  // re-emits it through the shared notification service, formatted like
+  // /cluster. Protected by a shared secret (?token= or X-Webhook-Token).
+  registry.register('POST', '/api/hooks/watchtower', async (req, body) => {
+    if (!watchtowerWebhookToken) {
+      return { status: 503, body: { error: 'Watchtower webhook disabled (set WATCHTOWER_WEBHOOK_TOKEN)' } };
+    }
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const token = url.searchParams.get('token') ?? req.headers['x-webhook-token'];
+    if (token !== watchtowerWebhookToken) {
+      logger.warn('Watchtower webhook rejected: bad or missing token');
+      return { status: 401, body: { error: 'unauthorized' } };
+    }
+    if (!notificationService) {
+      return { status: 503, body: { error: 'Notifications not configured' } };
+    }
+    try {
+      const { text, level } = formatWatchtowerNotification(body);
+      await notificationService.sendNotification({ text, level });
+      logger.info({ level }, 'Watchtower notification relayed');
+      return { status: 200, body: { ok: true } };
+    } catch (error) {
+      const message = error?.message ?? 'watchtower webhook error';
+      logger.warn({ err: message }, '/api/hooks/watchtower failed');
+      return { status: 502, body: { error: 'Relay failed', detail: message } };
+    }
   });
 }
 
