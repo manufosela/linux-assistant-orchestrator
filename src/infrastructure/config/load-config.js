@@ -51,7 +51,7 @@ function parseCsvList(raw) {
 export function loadConfig(envPath = '.env') {
   loadDotEnv(envPath);
 
-  return {
+  const config = {
     env: process.env.NODE_ENV ?? 'development',
     logLevel: process.env.LOG_LEVEL ?? 'info',
     assistantName: process.env.ASSISTANT_NAME ?? 'assistant',
@@ -66,9 +66,11 @@ export function loadConfig(envPath = '.env') {
 
     cluster: {
       enabled: process.env.CLUSTER_ENABLED !== 'false',
-      n2Ip: process.env.CLUSTER_N2_IP ?? '192.168.1.11',
-      n3Ip: process.env.CLUSTER_N3_IP ?? '192.168.1.12',
-      n4Ip: process.env.CLUSTER_N4_IP ?? '192.168.1.13',
+      // No hardcoded LAN: the node IPs are deployment-specific and must be
+      // provided when the watcher is enabled (validated below).
+      n2Ip: process.env.CLUSTER_N2_IP ?? '',
+      n3Ip: process.env.CLUSTER_N3_IP ?? '',
+      n4Ip: process.env.CLUSTER_N4_IP ?? '',
       historyPath:
         process.env.CLUSTER_HISTORY_PATH ?? join(homedir(), '.config', 'luis', 'cluster-history.json'),
     },
@@ -139,6 +141,29 @@ export function loadConfig(envPath = '.env') {
       agentId: process.env.HA_AGENT_ID ?? '',
     },
   };
+
+  validateConfig(config);
+  return config;
+}
+
+/**
+ * Fails fast on configuration that would otherwise break or silently misbehave
+ * at runtime. Keep messages actionable (tell the user exactly what to set).
+ *
+ * @param {AssistantConfig} config
+ */
+function validateConfig(config) {
+  if (config.cluster.enabled) {
+    const missing = ['n2Ip', 'n3Ip', 'n4Ip']
+      .filter((key) => !config.cluster[key])
+      .map((key) => `CLUSTER_${key.replace('Ip', '').toUpperCase()}_IP`);
+    if (missing.length > 0) {
+      throw new Error(
+        `Cluster watcher is enabled but ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not set. ` +
+          'Set them in your .env (see DEPLOYMENT.md) or set CLUSTER_ENABLED=false to disable the watcher.',
+      );
+    }
+  }
 }
 
 /**
