@@ -22,6 +22,13 @@ import { createHomeAssistantClient } from './modules/home-assistant/ha-client.js
 import { createHomeAssistantStateCache } from './modules/home-assistant/ha-state-cache.js';
 import { createSmartHomeAssistantClient } from './modules/home-assistant/ha-smart-client.js';
 import { createAlexaAnnouncer } from './modules/home-assistant/ha-alexa-announcer.js';
+import { createNotificationService } from './modules/notifications/notification-service.js';
+import { createTelegramNotificationChannel } from './modules/notifications/telegram-notification-channel.js';
+import { buildClusterTargets } from './modules/cluster/cluster-targets.js';
+import { createClusterHealthChecker } from './modules/cluster/cluster-health-checker.js';
+import { createClusterHistoryStore } from './modules/cluster/cluster-history-store.js';
+import { createClusterStatusService } from './modules/cluster/cluster-status-service.js';
+import { createClusterWatcher } from './modules/cluster/cluster-watcher.js';
 
 const startTime = new Date();
 
@@ -96,12 +103,26 @@ async function main() {
     { name: 'planning-game', status: config.planningGame.baseUrl ? 'enabled' : 'placeholder' },
     { name: 'code-agents', status: config.codeAgents.enableRemoteCodeTasks ? 'enabled' : 'disabled' },
     { name: 'web', status: config.web.enabled ? 'enabled' : 'disabled', note: config.web.enabled ? `${config.web.host}:${config.web.port}` : undefined },
+    { name: 'cluster', status: config.cluster.enabled ? 'enabled' : 'disabled' },
   ];
 
   const statusService = createAssistantStatusService({
     assistantName: config.assistantName,
     startTime,
     modules: moduleStatuses,
+  });
+
+  // Cluster monitoring infrastructure (shared by the watcher and the Telegram command)
+  const clusterTargets = buildClusterTargets(config.cluster);
+  const clusterHealthChecker = createClusterHealthChecker({ logger });
+  const clusterHistoryStore = createClusterHistoryStore({
+    filePath: config.cluster.historyPath,
+    logger,
+  });
+  const clusterStatusService = createClusterStatusService({
+    healthChecker: clusterHealthChecker,
+    targets: clusterTargets,
+    historyStore: clusterHistoryStore,
   });
 
   // Web tools (URL fetch + search) — shared with the web app, CLI and Telegram
@@ -148,11 +169,16 @@ async function main() {
   // Telegram bot
   let bot = null;
   let telegramStop = async () => {};
+  /** @type {import('./modules/notifications/notification-service.js').NotificationChannel | null} */
+  let telegramNotificationChannel = null;
 
   if (config.telegram.botToken) {
     const { bot: telegramBot, start, stop } = createTelegramBot(config.telegram.botToken, logger);
     bot = telegramBot;
     telegramStop = stop;
+
+    const notifyChatId = config.telegram.notifyChatId || config.telegram.allowedChatIds[0] || '';
+    telegramNotificationChannel = createTelegramNotificationChannel(bot, notifyChatId, logger);
 
     const router = createTelegramCommandRouter(allowedChatPolicy, logger);
 
@@ -165,6 +191,7 @@ async function main() {
       webSearch,
       homeAssistant,
       alexaAnnouncer,
+      clusterStatus: clusterStatusService,
       router,
       logger,
     });
@@ -182,6 +209,28 @@ async function main() {
     start();
   } else {
     logger.warn('TELEGRAM_BOT_TOKEN not set — Telegram bot is disabled');
+  }
+
+  // Notifications: Telegram channel when the bot is up, otherwise a no-op sink.
+  const notificationService = createNotificationService(
+    telegramNotificationChannel ? [telegramNotificationChannel] : [],
+    logger,
+  );
+
+  // Cluster watcher — monitors the 3 nodes and alerts on Telegram on failure/recovery.
+  let clusterWatcher = null;
+  if (config.cluster.enabled) {
+    clusterWatcher = createClusterWatcher({
+      logger,
+      scheduler,
+      notificationService,
+      healthChecker: clusterHealthChecker,
+      targets: clusterTargets,
+      historyStore: clusterHistoryStore,
+    });
+    clusterWatcher.start();
+  } else {
+    logger.info('Cluster watcher disabled (set CLUSTER_ENABLED=true to enable)');
   }
 
   // Start download watcher
@@ -218,6 +267,7 @@ async function main() {
   const shutdown = async (signal) => {
     logger.info({ signal }, 'Shutdown signal received');
     scheduler.stopAll();
+    clusterWatcher?.stop();
     await downloadWatcher.stop();
     await telegramStop();
     await webStop();

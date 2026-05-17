@@ -3,6 +3,7 @@ import { createInteractiveCliSession } from './interactive-cli-session.js';
 import { createTerminalRenderer } from './terminal-renderer.js';
 import { formatLlmError } from './llm-error-formatter.js';
 import { parseAnnounceInvocation, listTargetChoices } from '../../modules/home-assistant/ha-alexa-announcer.js';
+import { formatClusterStatus, formatClusterHistory } from '../../modules/cluster/cluster-status-service.js';
 
 /**
  * Composition root for the CLI application.
@@ -82,7 +83,7 @@ export function createCliApp(deps) {
  * }} deps
  */
 function registerCommands(deps) {
-  const { router, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, logger, remoteCodeTasksEnabled } = deps;
+  const { router, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, logger, remoteCodeTasksEnabled } = deps;
 
   router.register('status', async ({ renderer }) => {
     const status = statusService.getStatus();
@@ -287,6 +288,39 @@ function registerCommands(deps) {
       return { exitCode: 1 };
     }
   }, { description: 'Envía un anuncio hablado a un Echo de Alexa vía Home Assistant' });
+
+  router.register('cluster status', async ({ renderer }) => {
+    if (!clusterStatus) {
+      renderer.error('Monitorización del cluster no configurada.');
+      return { exitCode: 1 };
+    }
+    try {
+      const results = await clusterStatus.probe();
+      for (const line of formatClusterStatus(results)) renderer.print(line);
+      const anyDown = results.some((r) => !r.ok);
+      return { exitCode: anyDown ? 1 : 0 };
+    } catch (error) {
+      logger.warn({ err: error?.message }, 'CLI cluster status failed');
+      renderer.error(`Cluster status: ${error?.message ?? 'error desconocido'}`);
+      return { exitCode: 1 };
+    }
+  }, { description: 'Estado en vivo de los servicios del cluster (n2/n3/n4)' });
+
+  router.register('cluster history', async ({ renderer }) => {
+    if (!clusterStatus) {
+      renderer.error('Monitorización del cluster no configurada.');
+      return { exitCode: 1 };
+    }
+    try {
+      const incidents = await clusterStatus.history();
+      for (const line of formatClusterHistory(incidents)) renderer.print(line);
+      return { exitCode: 0 };
+    } catch (error) {
+      logger.warn({ err: error?.message }, 'CLI cluster history failed');
+      renderer.error(`Cluster history: ${error?.message ?? 'error desconocido'}`);
+      return { exitCode: 1 };
+    }
+  }, { description: 'Últimas 10 incidencias del cluster (caídas y recuperaciones)' });
 
   router.register('help', async () => {
     router.printHelp();

@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { homedir } from 'node:os';
 
 /**
  * Loads the .env file from the given path if it exists.
@@ -58,6 +59,18 @@ export function loadConfig(envPath = '.env') {
     telegram: {
       botToken: process.env.TELEGRAM_BOT_TOKEN ?? '',
       allowedChatIds: parseCsvList(process.env.TELEGRAM_ALLOWED_CHAT_IDS),
+      // Chat that receives unsolicited notifications (cluster alerts, etc.).
+      // Falls back to the first allowed chat when not set explicitly.
+      notifyChatId: process.env.TELEGRAM_NOTIFY_CHAT_ID ?? '',
+    },
+
+    cluster: {
+      enabled: process.env.CLUSTER_ENABLED !== 'false',
+      n2Ip: process.env.CLUSTER_N2_IP ?? '192.168.1.11',
+      n3Ip: process.env.CLUSTER_N3_IP ?? '192.168.1.12',
+      n4Ip: process.env.CLUSTER_N4_IP ?? '192.168.1.13',
+      historyPath:
+        process.env.CLUSTER_HISTORY_PATH ?? join(homedir(), '.config', 'luis', 'cluster-history.json'),
     },
 
     downloads: {
@@ -133,7 +146,8 @@ export function loadConfig(envPath = '.env') {
  * @property {string} env
  * @property {string} logLevel
  * @property {string} assistantName
- * @property {{ botToken: string, allowedChatIds: string[] }} telegram
+ * @property {{ botToken: string, allowedChatIds: string[], notifyChatId: string }} telegram
+ * @property {{ enabled: boolean, n2Ip: string, n3Ip: string, n4Ip: string, historyPath: string }} cluster
  * @property {{ watchPath: string, rulesPath: string, enableLlmClassification: boolean }} downloads
  * @property {import('../../types/llm.js').LlmConfig} llm
  * @property {{ provider: string, readOnly: boolean }} email
