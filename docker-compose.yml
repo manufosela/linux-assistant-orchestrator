@@ -1,0 +1,70 @@
+# Reproducible deployment for the LUIS assistant.
+#
+# 1. Copy .env.example to .env and fill in your values (see DEPLOYMENT.md).
+# 2. docker compose build
+# 3. docker compose up -d
+#
+# Every value here comes from the environment / .env file — there are NO
+# hardcoded IPs, tokens or paths, so this file is safe to commit and anyone
+# can reproduce the setup with their own .env.
+services:
+  luis:
+    container_name: ${CONTAINER_NAME:-luis}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: luis:local
+    restart: unless-stopped
+    ports:
+      - "${WEB_PUBLISHED_PORT:-3030}:3000"
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      ASSISTANT_NAME: ${ASSISTANT_NAME:-luis}
+
+      # --- Local LLM (OpenAI-compatible endpoint) ---
+      LLM_PROVIDER: ${LLM_PROVIDER:-local}
+      LOCAL_LLM_BASE_URL: ${LOCAL_LLM_BASE_URL}
+      LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL}
+      LOCAL_LLM_API_KEY: ${LOCAL_LLM_API_KEY:-}
+      LOCAL_LLM_TIMEOUT_MS: ${LOCAL_LLM_TIMEOUT_MS:-600000}
+      ALLOW_CLOUD_LLM: ${ALLOW_CLOUD_LLM:-false}
+
+      # --- Web UI (LAN only) ---
+      WEB_ENABLED: ${WEB_ENABLED:-true}
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: "3000"
+
+      # --- Web tools ---
+      WEB_SEARCH_BASE_URL: ${WEB_SEARCH_BASE_URL:-}
+      URL_FETCH_ALLOW_PRIVATE: ${URL_FETCH_ALLOW_PRIVATE:-false}
+      URL_FETCH_ALLOWLIST: ${URL_FETCH_ALLOWLIST:-}
+
+      # --- Downloads watcher ---
+      DOWNLOADS_PATH: /data/downloads
+      DOWNLOAD_RULES_PATH: /data/config/download-rules.json
+
+      # --- Telegram ---
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_ALLOWED_CHAT_IDS: ${TELEGRAM_ALLOWED_CHAT_IDS}
+      TELEGRAM_NOTIFY_CHAT_ID: ${TELEGRAM_NOTIFY_CHAT_ID:-}
+
+      # --- Home Assistant (optional) ---
+      HA_BASE_URL: ${HA_BASE_URL:-}
+      HA_TOKEN: ${HA_TOKEN:-}
+      HA_LANGUAGE: ${HA_LANGUAGE:-es}
+      HA_AGENT_ID: ${HA_AGENT_ID:-}
+
+      # --- Cluster watcher (optional; required IPs when enabled) ---
+      CLUSTER_ENABLED: ${CLUSTER_ENABLED:-false}
+      CLUSTER_N2_IP: ${CLUSTER_N2_IP:-}
+      CLUSTER_N3_IP: ${CLUSTER_N3_IP:-}
+      CLUSTER_N4_IP: ${CLUSTER_N4_IP:-}
+    volumes:
+      - ./data/downloads:/data/downloads:rw
+      - ./data/config:/data/config:rw
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

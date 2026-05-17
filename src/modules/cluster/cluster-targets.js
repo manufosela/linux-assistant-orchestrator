@@ -5,13 +5,24 @@
  * here in code. Only the node IPs are configurable via env, so the physical
  * addresses can change without a code change.
  *
- * @param {{ n2Ip?: string, n3Ip?: string, n4Ip?: string }} [ips]
+ * The node IPs are deployment-specific and must be supplied (via the
+ * `CLUSTER_N2_IP`/`CLUSTER_N3_IP`/`CLUSTER_N4_IP` env vars, surfaced through
+ * config). No LAN address is hardcoded so the repo is environment-agnostic.
+ *
+ * @param {{ n2Ip: string, n3Ip: string, n4Ip: string }} ips
  * @returns {ClusterTarget[]}
  */
 export function buildClusterTargets({ n2Ip, n3Ip, n4Ip } = {}) {
-  const ipN2 = n2Ip || '192.168.1.11';
-  const ipN3 = n3Ip || '192.168.1.12';
-  const ipN4 = n4Ip || '192.168.1.13';
+  if (!n2Ip || !n3Ip || !n4Ip) {
+    throw new Error(
+      'buildClusterTargets requires n2Ip, n3Ip and n4Ip. ' +
+        'Set CLUSTER_N2_IP, CLUSTER_N3_IP and CLUSTER_N4_IP (see DEPLOYMENT.md).',
+    );
+  }
+
+  const ipN2 = n2Ip;
+  const ipN3 = n3Ip;
+  const ipN4 = n4Ip;
 
   return [
     // LiteLLM's /health requires the API key (401 without it). /health/liveliness
