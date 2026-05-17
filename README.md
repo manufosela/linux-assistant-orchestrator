@@ -49,9 +49,28 @@ These modules exist as typed interfaces/placeholders and will be filled in futur
 
 ## Installation
 
+Get the code:
+
 ```bash
-cd assistant
-pnpm install
+git clone https://github.com/manufosela/linux-assistant-orchestrator.git
+cd linux-assistant-orchestrator
+```
+
+Then either run it with Docker (recommended — see
+[DEPLOYMENT.md](DEPLOYMENT.md)):
+
+```bash
+cp .env.example .env     # then edit .env with your values
+docker compose build
+docker compose up -d
+```
+
+…or run it locally with Node.js (development):
+
+```bash
+pnpm install             # requires Node.js >= 20 and pnpm
+cp .env.example .env     # then edit .env with your values
+pnpm start
 ```
 
 ---
