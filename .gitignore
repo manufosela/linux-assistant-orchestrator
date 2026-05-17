@@ -6,3 +6,8 @@
 node_modules/
 config/download-rules.json
 
+# Local Docker overrides and runtime volumes
+docker-compose.override.yml
+/data/
+.kj/
+
