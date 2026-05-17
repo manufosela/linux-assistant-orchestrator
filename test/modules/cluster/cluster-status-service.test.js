@@ -8,7 +8,7 @@ import {
 } from '../../../src/modules/cluster/cluster-status-service.js';
 
 const TARGETS = [
-  { id: 'n2:litellm', node: 'n2', service: 'LiteLLM', host: '192.168.1.11', port: 8080, kind: 'http', path: '/health' },
+  { id: 'n2:litellm', node: 'n2', service: 'LiteLLM', host: '192.168.1.11', port: 8080, kind: 'http', path: '/health/liveliness' },
   { id: 'n4:postgres', node: 'n4', service: 'Postgres', host: '192.168.1.13', port: 5432, kind: 'tcp' },
 ];
 

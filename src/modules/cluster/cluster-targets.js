@@ -14,7 +14,9 @@ export function buildClusterTargets({ n2Ip, n3Ip, n4Ip } = {}) {
   const ipN4 = n4Ip || '192.168.1.13';
 
   return [
-    { id: 'n2:litellm', node: 'n2', service: 'LiteLLM', host: ipN2, port: 8080, kind: 'http', path: '/health' },
+    // LiteLLM's /health requires the API key (401 without it). /health/liveliness
+    // is the unauthenticated liveness probe meant exactly for monitoring.
+    { id: 'n2:litellm', node: 'n2', service: 'LiteLLM', host: ipN2, port: 8080, kind: 'http', path: '/health/liveliness' },
     { id: 'n2:ollama', node: 'n2', service: 'Ollama', host: ipN2, port: 11434, kind: 'http', path: '/api/tags' },
     { id: 'n2:webui', node: 'n2', service: 'Open WebUI', host: ipN2, port: 3000, kind: 'http', path: '/' },
     { id: 'n3:ollama', node: 'n3', service: 'Ollama', host: ipN3, port: 11434, kind: 'http', path: '/api/tags' },
