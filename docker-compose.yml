@@ -35,6 +35,9 @@ services:
       WEB_HOST: 0.0.0.0
       WEB_PORT: "3000"
 
+      # --- Watchtower webhook (optional; relays to Telegram like /cluster) ---
+      WATCHTOWER_WEBHOOK_TOKEN: ${WATCHTOWER_WEBHOOK_TOKEN:-}
+
       # --- Web tools ---
       WEB_SEARCH_BASE_URL: ${WEB_SEARCH_BASE_URL:-}
       URL_FETCH_ALLOW_PRIVATE: ${URL_FETCH_ALLOW_PRIVATE:-false}

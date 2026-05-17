@@ -90,6 +90,7 @@ is enabled, `Cluster watcher started`.
 | `ALLOW_CLOUD_LLM` | no | `false` | Allow cloud LLM providers |
 | `WEB_ENABLED` | no | `true` (compose) | Enable LAN web UI |
 | `WEB_PUBLISHED_PORT` | no | `3030` | Host port mapped to container `:3000` |
+| `WATCHTOWER_WEBHOOK_TOKEN` | no | — | Shared secret for the Watchtower webhook (empty = disabled) |
 | `WEB_SEARCH_BASE_URL` | no | — | SearXNG base URL |
 | `URL_FETCH_ALLOW_PRIVATE` | no | `false` | Allow fetching private-network URLs |
 | `URL_FETCH_ALLOWLIST` | no | — | CSV of allowed private hosts/IPs |
@@ -129,7 +130,61 @@ CLI: `luis cluster status` (live table) / `luis cluster history` (last 10
 incidents). Telegram: `/cluster`, `/cluster historial`, or natural language
 ("estado del cluster").
 
-## 8. Updating an existing deployment
+## 8. Watchtower → Telegram through LUIS (optional)
+
+Instead of letting Watchtower notify Telegram directly (raw text, separate
+formatting), point it at LUIS so its messages go through the same notification
+pipeline and look like `/cluster`.
+
+**On the LUIS host** — set a shared secret and restart:
+
+```
+WATCHTOWER_WEBHOOK_TOKEN=<a-long-random-string>
+```
+
+LUIS then exposes `POST /api/hooks/watchtower?token=<secret>` (only when the
+token is set; bad/missing token → 401). It relays the payload to
+`TELEGRAM_NOTIFY_CHAT_ID`.
+
+**On each host running Watchtower** — replace the `telegram://…` notification
+URL with the LUIS webhook. Recommended: a small `docker-compose.yml` so the
+config is editable and reproducible (token kept in a local `.env`, never
+committed):
+
+```yaml
+services:
+  watchtower:
+    image: containrrr/watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      WATCHTOWER_SCHEDULE: "0 0 4 * * *"
+      WATCHTOWER_NOTIFICATION_REPORT: "true"
+      WATCHTOWER_NOTIFICATIONS: shoutrrr
+      WATCHTOWER_NOTIFICATIONS_HOSTNAME: ${HOSTNAME}
+      WATCHTOWER_NOTIFICATION_URL: >-
+        generic+http://<luis-host>:<WEB_PUBLISHED_PORT>/api/hooks/watchtower?token=${WATCHTOWER_WEBHOOK_TOKEN}
+      # Optional: emit structured JSON so LUIS renders the pretty table.
+      WATCHTOWER_NOTIFICATION_TEMPLATE: |
+        {"host":"{{.Host}}","scanned":{{len .Report.Scanned}},"updated":[{{range $i,$e := .Report.Updated}}{{if $i}},{{end}}{"name":"{{$e.Name}}","image":"{{$e.ImageName}}","old":"{{$e.CurrentImageID.ShortID}}","new":"{{$e.LatestImageID.ShortID}}"}{{end}}],"failed":[{{range $i,$e := .Report.Failed}}{{if $i}},{{end}}{"name":"{{$e.Name}}","image":"{{$e.ImageName}}","error":"{{$e.Error}}"}{{end}}]}
+```
+
+If the template is omitted, shoutrrr posts `{"message": "<text>"}` and LUIS
+still wraps it in the consistent header + `<pre>` block — just without the
+per-container table.
+
+Test it without waiting for the schedule:
+
+```bash
+curl -s -X POST "http://<luis-host>:<port>/api/hooks/watchtower?token=<secret>" \
+  -H 'Content-Type: application/json' \
+  -d '{"host":"n2","updated":[{"name":"luis","image":"luis:local","old":"a1","new":"b2"}],"scanned":12}'
+```
+
+You should get the formatted message in your Telegram notify chat.
+
+## 9. Updating an existing deployment
 
 **Preferred — git on the server:**
 
