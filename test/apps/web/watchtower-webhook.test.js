@@ -99,4 +99,24 @@ describe('POST /api/hooks/watchtower', () => {
       await app.stop();
     }
   });
+
+  it('acepta cuerpo NO-JSON (texto plano de shoutrrr) sin 400', async () => {
+    const sent = [];
+    const app = await start({
+      watchtowerWebhookToken: 'secret',
+      notificationService: { sendNotification: async (m) => sent.push(m) },
+    });
+    try {
+      const res = await fetch(`${app.baseUrl}/api/hooks/watchtower?token=secret`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: 'Found 1 container to update: luis',
+      });
+      assert.equal(res.status, 200);
+      assert.equal(sent.length, 1);
+      assert.match(sent[0].text, /Found 1 container to update: luis/);
+    } finally {
+      await app.stop();
+    }
+  });
 });
