@@ -4,40 +4,47 @@ import assert from 'node:assert/strict';
 import { formatWatchtowerNotification } from '../../../src/modules/watchtower/watchtower-formatter.js';
 
 describe('formatWatchtowerNotification', () => {
-  it('formatea un reporte estructurado con updates como tabla (success)', () => {
+  it('reporte con actualizaciones → resumen en español (success)', () => {
     const { text, level } = formatWatchtowerNotification({
       host: 'n2',
-      updated: [{ name: 'luis', image: 'luis:local', old: 'abc1234', new: 'def5678' }],
+      updated: [{ name: 'luis' }, { name: 'grafana' }],
+      failed: [],
       scanned: 12,
     });
     assert.equal(level, 'success');
     assert.match(text, /🐳 <b>Watchtower · n2<\/b>/);
-    assert.match(text, /<pre>[\s\S]*✅ luis {2}luis:local {2}abc1234 → def5678[\s\S]*<\/pre>/);
-    assert.match(text, /12 contenedores revisados/);
+    assert.match(text, /✅ 2 actualizados: luis, grafana/);
   });
 
-  it('marca warn cuando hay fallos', () => {
-    const { text, level } = formatWatchtowerNotification({
-      failed: [{ name: 'x', image: 'y:1', error: 'pull denied' }],
-    });
+  it('fallos → warn con nombres', () => {
+    const { text, level } = formatWatchtowerNotification({ host: 'n4', failed: [{ name: 'x' }] });
     assert.equal(level, 'warn');
-    assert.match(text, /⚠️ x {2}y:1 {2}ERROR: pull denied/);
+    assert.match(text, /🐳 <b>Watchtower · n4<\/b>/);
+    assert.match(text, /⚠️ 1 con fallo: x/);
   });
 
-  it('envuelve un mensaje plano (shoutrrr) en el mismo formato', () => {
-    const { text, level } = formatWatchtowerNotification({ message: 'Found 0 containers to update' });
+  it('shoutrrr envuelve nuestra plantilla JSON en message → la abre', () => {
+    const { text, level } = formatWatchtowerNotification({
+      message: '{"host":"n3","scanned":5,"updated":[],"failed":[]}',
+    });
     assert.equal(level, 'info');
-    assert.match(text, /🐳 <b>Watchtower<\/b>\n<pre>Found 0 containers to update<\/pre>/);
+    assert.match(text, /🐳 <b>Watchtower · n3<\/b>/);
+    assert.match(text, /Sin cambios \(5 contenedores revisados\)\./);
   });
 
-  it('acepta string crudo y escapa HTML', () => {
-    const { text } = formatWatchtowerNotification('a < b & c > d');
-    assert.match(text, /<pre>a &lt; b &amp; c &gt; d<\/pre>/);
-  });
-
-  it('no se rompe con payload vacío', () => {
-    const { text, level } = formatWatchtowerNotification(undefined);
+  it('texto plano (banner) → primera línea, sin volcado', () => {
+    const { text, level } = formatWatchtowerNotification({
+      message: 'Watchtower 1.17.0\nNext scheduled run: 2026-05-20 04:30:00 UTC',
+    });
     assert.equal(level, 'info');
-    assert.match(text, /<pre>/);
+    assert.match(text, /🐳 <b>Watchtower<\/b>\nWatchtower 1\.17\.0/);
+    assert.ok(!text.includes('Next scheduled run'));
+  });
+
+  it('escapa HTML y no se rompe con vacío', () => {
+    assert.match(formatWatchtowerNotification('a < b & c').text, /a &lt; b &amp; c/);
+    const r = formatWatchtowerNotification(undefined);
+    assert.equal(r.level, 'info');
+    assert.match(r.text, /Watchtower/);
   });
 });

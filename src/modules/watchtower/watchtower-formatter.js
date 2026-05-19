@@ -15,44 +15,70 @@
  * @returns {{ text: string, level: 'info' | 'warn' | 'success' }}
  */
 export function formatWatchtowerNotification(payload) {
-  const data = typeof payload === 'string' ? { message: payload } : (payload ?? {});
-  const host = typeof data.host === 'string' && data.host ? data.host : undefined;
-  const header = `🐳 <b>Watchtower${host ? ` · ${escapeHtml(host)}` : ''}</b>`;
+  let data = typeof payload === 'string' ? (tryJson(payload) ?? { message: payload }) : (payload ?? {});
+  // shoutrrr `generic` envuelve la plantilla de Watchtower en el campo
+  // `message` (un string que, con nuestra plantilla, ES JSON). Lo abrimos.
+  if (data && typeof data.message === 'string') {
+    const inner = tryJson(data.message.trim());
+    if (inner && typeof inner === 'object') data = inner;
+  }
 
+  const host = typeof data.host === 'string' && data.host ? data.host : 'desconocido';
   const updated = Array.isArray(data.updated) ? data.updated : [];
   const failed = Array.isArray(data.failed) ? data.failed : [];
+  const scanned = Number.isFinite(data.scanned) ? data.scanned : undefined;
+  const nameOf = (e) => (typeof e === 'string' ? e : oneLine(e?.name));
 
-  // Structured report → render the table.
+  // Reporte estructurado: hubo actualizaciones y/o fallos.
   if (updated.length > 0 || failed.length > 0) {
     const lines = [];
-    for (const entry of updated) {
-      lines.push(
-        `✅ ${oneLine(entry?.name)}  ${oneLine(entry?.image)}  ${oneLine(entry?.old)} → ${oneLine(entry?.new)}`,
-      );
+    if (updated.length > 0) {
+      lines.push(`✅ ${updated.length} actualizado${updated.length > 1 ? 's' : ''}: ${updated.map(nameOf).join(', ')}`);
     }
-    for (const entry of failed) {
-      lines.push(`⚠️ ${oneLine(entry?.name)}  ${oneLine(entry?.image)}  ERROR: ${oneLine(entry?.error)}`);
-    }
-    if (Number.isFinite(data.scanned)) {
-      lines.push(`— ${data.scanned} contenedores revisados`);
+    if (failed.length > 0) {
+      lines.push(`⚠️ ${failed.length} con fallo: ${failed.map(nameOf).join(', ')}`);
     }
     return {
-      text: `${header}\n<pre>${escapeHtml(lines.join('\n'))}</pre>`,
+      text: `🐳 <b>Watchtower · ${escapeHtml(host)}</b>\n${escapeHtml(lines.join('\n'))}`,
       level: failed.length > 0 ? 'warn' : 'success',
     };
   }
 
-  // Plain message (shoutrrr default) or raw text.
-  const raw =
+  // Reporte estructurado sin cambios.
+  if (scanned !== undefined || (typeof data.host === 'string' && data.host)) {
+    return {
+      text:
+        `🐳 <b>Watchtower · ${escapeHtml(host)}</b>\nSin cambios` +
+        (scanned !== undefined ? ` (${scanned} contenedores revisados).` : '.'),
+      level: 'info',
+    };
+  }
+
+  // Sin plantilla / texto plano (banner u otros): resumen corto en una línea.
+  const raw = (
     typeof data.message === 'string'
       ? data.message
       : typeof data.text === 'string'
         ? data.text
-        : JSON.stringify(data);
-  const body = raw.trim() || '(sin contenido)';
-  const level = /\b(error|fail|failed|fatal)\b/i.test(body) ? 'warn' : 'info';
+        : JSON.stringify(data)
+  ).trim();
+  const firstLine = raw.split('\n').map((s) => s.trim()).filter(Boolean)[0] || '(sin contenido)';
+  const level = /\b(error|fail(ed)?|fatal)\b/i.test(raw) ? 'warn' : 'info';
+  return { text: `🐳 <b>Watchtower</b>\n${escapeHtml(firstLine)}`, level };
+}
 
-  return { text: `${header}\n<pre>${escapeHtml(body)}</pre>`, level };
+/**
+ * Intenta parsear JSON; devuelve null si no lo es.
+ *
+ * @param {string} s
+ * @returns {any|null}
+ */
+function tryJson(s) {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
 }
 
 /**
