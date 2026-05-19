@@ -75,7 +75,7 @@ describe('POST /api/hooks/watchtower', () => {
       assert.equal(sent.length, 1);
       assert.equal(sent[0].level, 'success');
       assert.match(sent[0].text, /Watchtower · n2/);
-      assert.match(sent[0].text, /✅ luis/);
+      assert.match(sent[0].text, /✅ 1 actualizado: luis/);
     } finally {
       await app.stop();
     }
