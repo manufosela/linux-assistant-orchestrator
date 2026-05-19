@@ -154,25 +154,33 @@ committed):
 ```yaml
 services:
   watchtower:
-    image: containrrr/watchtower
+    # NOTA: usa el fork mantenido; containrrr/watchtower está archivado y
+    # casca con Docker moderno (client API too old).
+    image: nickfedor/watchtower:latest
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      WATCHTOWER_SCHEDULE: "0 0 4 * * *"
+      WATCHTOWER_SCHEDULE: "0 30 4 * * *"          # UTC
+      WATCHTOWER_LABEL_ENABLE: "true"               # opt-in: solo contenedores etiquetados
+      WATCHTOWER_CLEANUP: "true"
       WATCHTOWER_NOTIFICATION_REPORT: "true"
+      WATCHTOWER_NO_STARTUP_MESSAGE: "true"         # sin banner inútil de arranque
       WATCHTOWER_NOTIFICATIONS: shoutrrr
-      WATCHTOWER_NOTIFICATIONS_HOSTNAME: ${HOSTNAME}
+      WATCHTOWER_NOTIFICATIONS_HOSTNAME: "<host>"   # n2 / servidorix / …
       WATCHTOWER_NOTIFICATION_URL: >-
         generic+http://<luis-host>:<WEB_PUBLISHED_PORT>/api/hooks/watchtower?token=${WATCHTOWER_WEBHOOK_TOKEN}
-      # Optional: emit structured JSON so LUIS renders the pretty table.
-      WATCHTOWER_NOTIFICATION_TEMPLATE: |
-        {"host":"{{.Host}}","scanned":{{len .Report.Scanned}},"updated":[{{range $i,$e := .Report.Updated}}{{if $i}},{{end}}{"name":"{{$e.Name}}","image":"{{$e.ImageName}}","old":"{{$e.CurrentImageID.ShortID}}","new":"{{$e.LatestImageID.ShortID}}"}{{end}}],"failed":[{{range $i,$e := .Report.Failed}}{{if $i}},{{end}}{"name":"{{$e.Name}}","image":"{{$e.ImageName}}","error":"{{$e.Error}}"}{{end}}]}
+      # JSON compacto que LUIS traduce a un resumen en español. Ojo: en
+      # docker-compose los `$` de Go-template se escriben `$$` (si no, compose
+      # los interpola). El formateador (src/modules/watchtower) lee este JSON
+      # (incluido cuando shoutrrr lo envuelve en `message`).
+      WATCHTOWER_NOTIFICATION_TEMPLATE: '{{- if .Report -}}{"host":"{{.Host}}","scanned":{{len .Report.Scanned}},"updated":[{{range $$i,$$e := .Report.Updated}}{{if $$i}},{{end}}"{{$$e.Name}}"{{end}}],"failed":[{{range $$i,$$e := .Report.Failed}}{{if $$i}},{{end}}"{{$$e.Name}}"{{end}}]}{{- else -}}{"message":"sin reporte"}{{- end -}}'
 ```
 
-If the template is omitted, shoutrrr posts `{"message": "<text>"}` and LUIS
-still wraps it in the consistent header + `<pre>` block — just without the
-per-container table.
+LUIS convierte ese reporte en un aviso conciso en español:
+`✅ N actualizados: …` / `⚠️ N con fallo: …` / `Sin cambios (N revisados)`.
+Si se omite la plantilla, llega solo la primera línea del texto de Watchtower
+(sin volcado).
 
 Test it without waiting for the schedule:
 
