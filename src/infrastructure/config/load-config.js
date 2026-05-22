@@ -81,6 +81,16 @@ export function loadConfig(envPath = '.env') {
         process.env.CLUSTER_HISTORY_PATH ?? join(homedir(), '.config', 'luis', 'cluster-history.json'),
     },
 
+    prometheus: {
+      // On-demand "is anything down?" checks against the Prometheus HTTP API.
+      // No watcher, no proactive alerts — only answered when the user asks.
+      // Opt-in (like the cluster watcher): set PROMETHEUS_ENABLED=true.
+      enabled: process.env.PROMETHEUS_ENABLED === 'true',
+      // Deployment-specific: Prometheus is reached over the LAN (validated below).
+      baseUrl: process.env.PROMETHEUS_BASE_URL ?? '',
+      timeoutMs: Number(process.env.PROMETHEUS_TIMEOUT_MS ?? 8000),
+    },
+
     downloads: {
       watchPath: process.env.DOWNLOADS_PATH ?? '/tmp/downloads',
       rulesPath: process.env.DOWNLOAD_RULES_PATH ?? './config/download-rules.json',
@@ -170,6 +180,13 @@ function validateConfig(config) {
       );
     }
   }
+
+  if (config.prometheus.enabled && !config.prometheus.baseUrl) {
+    throw new Error(
+      'Prometheus integration is enabled but PROMETHEUS_BASE_URL is not set. ' +
+        'Set it (e.g. http://192.168.1.7:9090) or set PROMETHEUS_ENABLED=false to disable it.',
+    );
+  }
 }
 
 /**
@@ -180,6 +197,7 @@ function validateConfig(config) {
  * @property {{ botToken: string, allowedChatIds: string[], notifyChatId: string }} telegram
  * @property {{ webhookToken: string }} watchtower
  * @property {{ enabled: boolean, n2Ip: string, n3Ip: string, n4Ip: string, historyPath: string }} cluster
+ * @property {{ enabled: boolean, baseUrl: string, timeoutMs: number }} prometheus
  * @property {{ watchPath: string, rulesPath: string, enableLlmClassification: boolean }} downloads
  * @property {import('../../types/llm.js').LlmConfig} llm
  * @property {{ provider: string, readOnly: boolean }} email

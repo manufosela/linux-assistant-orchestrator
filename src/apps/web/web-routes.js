@@ -1,4 +1,6 @@
 import { formatWatchtowerNotification } from '../../modules/watchtower/watchtower-formatter.js';
+import { parsePrometheusIntent } from '../../modules/prometheus/prometheus-intent.js';
+import { formatDownReport } from '../../modules/prometheus/prometheus-formatter.js';
 
 /**
  * Registers HTTP route handlers on the supplied registry.
@@ -16,11 +18,12 @@ import { formatWatchtowerNotification } from '../../modules/watchtower/watchtowe
  *   webSearch?: import('../../modules/web/web-search.js').WebSearchService,
  *   homeAssistant?: import('../../modules/home-assistant/ha-client.js').HomeAssistantClient,
  *   notificationService?: import('../../modules/notifications/notification-service.js').NotificationService,
+ *   prometheusClient?: import('../../modules/prometheus/prometheus-client.js').PrometheusClient,
  *   watchtowerWebhookToken?: string,
  *   logger: import('pino').Logger,
  * }} deps
  */
-export function registerWebRoutes({ registry, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, notificationService, watchtowerWebhookToken, logger }) {
+export function registerWebRoutes({ registry, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, notificationService, prometheusClient, watchtowerWebhookToken, logger }) {
   registry.register('GET', '/api/status', async () => {
     const status = statusService.getStatus();
     return { status: 200, body: status };
@@ -36,6 +39,8 @@ export function registerWebRoutes({ registry, llmService, statusService, rulesRe
     if (!prompt) {
       return { status: 400, body: { error: 'Missing prompt' } };
     }
+    const prometheusReply = await maybeAnswerFromPrometheus(prompt, prometheusClient, logger);
+    if (prometheusReply) return prometheusReply;
     try {
       const text = await llmService.generateText(prompt, {
         module: 'web',
@@ -58,6 +63,9 @@ export function registerWebRoutes({ registry, llmService, statusService, rulesRe
     if (!messages.every(isValidMessage)) {
       return { status: 400, body: { error: 'Invalid message format' } };
     }
+    const lastUserMessage = [...messages].reverse().find((message) => message.role === 'user');
+    const prometheusReply = await maybeAnswerFromPrometheus(lastUserMessage?.content, prometheusClient, logger);
+    if (prometheusReply) return prometheusReply;
     try {
       const text = await llmService.chat(messages, {
         module: 'web',
@@ -70,6 +78,22 @@ export function registerWebRoutes({ registry, llmService, statusService, rulesRe
       const message = error?.message ?? 'LLM error';
       logger.warn({ err: message }, '/api/chat failed');
       return { status: 502, body: { error: 'LLM provider error', detail: message } };
+    }
+  });
+
+  // Dedicated, machine-readable endpoint for the Prometheus "is anything down?"
+  // report — handy for dashboards or scripts that want the structured data.
+  registry.register('GET', '/api/prometheus/status', async () => {
+    if (!prometheusClient) {
+      return { status: 503, body: { error: 'Prometheus integration is not configured' } };
+    }
+    try {
+      const report = await prometheusClient.getDownReport();
+      return { status: 200, body: report };
+    } catch (error) {
+      const message = error?.message ?? 'prometheus error';
+      logger.warn({ err: message }, '/api/prometheus/status failed');
+      return { status: 502, body: { error: 'Prometheus query failed', detail: message } };
     }
   });
 
@@ -183,6 +207,33 @@ export function registerWebRoutes({ registry, llmService, statusService, rulesRe
       return { status: 502, body: { error: 'Relay failed', detail: message } };
     }
   });
+}
+
+/**
+ * When the user's text is a natural-language "is anything down?" query, answers
+ * it from Prometheus instead of the LLM. Returns a {@link RouteResponse} when it
+ * handled the request, or `null` so the caller falls back to the LLM.
+ *
+ * Prometheus errors are returned as a normal `200 { text }` reply so the chat UI
+ * shows them inline, exactly like a regular assistant answer.
+ *
+ * @param {unknown} text
+ * @param {import('../../modules/prometheus/prometheus-client.js').PrometheusClient} [prometheusClient]
+ * @param {import('pino').Logger} logger
+ * @returns {Promise<RouteResponse | null>}
+ */
+async function maybeAnswerFromPrometheus(text, prometheusClient, logger) {
+  if (!prometheusClient || typeof text !== 'string' || !parsePrometheusIntent(text)) {
+    return null;
+  }
+  try {
+    const report = await prometheusClient.getDownReport();
+    return { status: 200, body: { text: formatDownReport(report).text } };
+  } catch (error) {
+    const message = error?.message ?? 'prometheus error';
+    logger.warn({ err: message }, 'Prometheus intent query failed');
+    return { status: 200, body: { text: `No pude consultar Prometheus: ${message}` } };
+  }
 }
 
 /**
