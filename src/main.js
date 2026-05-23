@@ -29,6 +29,7 @@ import { createClusterHealthChecker } from './modules/cluster/cluster-health-che
 import { createClusterHistoryStore } from './modules/cluster/cluster-history-store.js';
 import { createClusterStatusService } from './modules/cluster/cluster-status-service.js';
 import { createClusterWatcher } from './modules/cluster/cluster-watcher.js';
+import { createPrometheusClient } from './modules/prometheus/prometheus-client.js';
 
 const startTime = new Date();
 
@@ -104,6 +105,7 @@ async function main() {
     { name: 'code-agents', status: config.codeAgents.enableRemoteCodeTasks ? 'enabled' : 'disabled' },
     { name: 'web', status: config.web.enabled ? 'enabled' : 'disabled', note: config.web.enabled ? `${config.web.host}:${config.web.port}` : undefined },
     { name: 'cluster', status: config.cluster.enabled ? 'enabled' : 'disabled' },
+    { name: 'prometheus', status: config.prometheus.enabled ? 'enabled' : 'disabled' },
   ];
 
   const statusService = createAssistantStatusService({
@@ -124,6 +126,19 @@ async function main() {
     targets: clusterTargets,
     historyStore: clusterHistoryStore,
   });
+
+  // Prometheus — on-demand "is anything down?" checks. No watcher, no alerts:
+  // it is only queried when the user explicitly asks (Telegram or web).
+  const prometheusClient = config.prometheus.enabled
+    ? createPrometheusClient({
+        baseUrl: config.prometheus.baseUrl,
+        timeoutMs: config.prometheus.timeoutMs,
+        logger,
+      })
+    : null;
+  if (!prometheusClient) {
+    logger.info('Prometheus integration disabled (set PROMETHEUS_ENABLED=true to enable)');
+  }
 
   // Web tools (URL fetch + search) — shared with the web app, CLI and Telegram
   const urlFetcher = createUrlFetcher({
@@ -192,6 +207,7 @@ async function main() {
       homeAssistant,
       alexaAnnouncer,
       clusterStatus: clusterStatusService,
+      prometheusClient,
       router,
       logger,
     });
@@ -248,6 +264,7 @@ async function main() {
         webSearch,
         homeAssistant,
         notificationService,
+        prometheusClient,
         watchtowerWebhookToken: config.watchtower.webhookToken,
         logger,
         host: config.web.host,

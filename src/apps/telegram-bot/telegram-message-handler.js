@@ -3,6 +3,8 @@ import { createThinkingIndicator } from './thinking-indicator.js';
 import { parseAnnounceInvocation, listTargetChoices } from '../../modules/home-assistant/ha-alexa-announcer.js';
 import { parseClusterIntent } from '../../modules/cluster/cluster-intent.js';
 import { formatClusterStatus, formatClusterHistory } from '../../modules/cluster/cluster-status-service.js';
+import { parsePrometheusIntent } from '../../modules/prometheus/prometheus-intent.js';
+import { formatDownReport } from '../../modules/prometheus/prometheus-formatter.js';
 
 const ANNOUNCE_PENDING_TTL_MS = 5 * 60 * 1000;
 const ANNOUNCE_CALLBACK_PREFIX = 'anuncia:';
@@ -27,11 +29,12 @@ const SYSTEM_PROMPT =
  * @param {import('../../modules/web/web-search.js').WebSearchService} [deps.webSearch]
  * @param {import('../../modules/home-assistant/ha-client.js').HomeAssistantClient} [deps.homeAssistant]
  * @param {import('../../modules/cluster/cluster-status-service.js').ClusterStatusService} [deps.clusterStatus]
+ * @param {import('../../modules/prometheus/prometheus-client.js').PrometheusClient} [deps.prometheusClient]
  * @param {import('../../apps/telegram-bot/telegram-command-router.js').TelegramCommandRouter} deps.router
  * @param {import('pino').Logger} deps.logger
  * @returns {void}
  */
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -387,6 +390,32 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     }
   });
 
+  /**
+   * Queries Prometheus and returns the HTML answer for the "is anything down?"
+   * question. Shared by the `/caidos` command and the natural-language intent.
+   *
+   * @returns {Promise<string>}
+   */
+  async function buildPrometheusReply() {
+    const report = await prometheusClient.getDownReport();
+    return formatDownReport(report).html;
+  }
+
+  router.register('/caidos', async (message) => {
+    const chatId = message.chat.id;
+    if (!prometheusClient) {
+      await bot.sendMessage(chatId, '⚠️ Integración con Prometheus no configurada.');
+      return;
+    }
+    const indicator = await createThinkingIndicator(bot, chatId, { text: '📊 Consultando Prometheus…', logger });
+    try {
+      await indicator.finish(await buildPrometheusReply(), { parse_mode: 'HTML' });
+    } catch (error) {
+      logger.warn({ chatId, err: error.message }, '/caidos failed');
+      await indicator.finish(`❌ No pude consultar Prometheus: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+    }
+  });
+
   router.register('/help', async (message) => {
     const chatId = message.chat.id;
     const text = [
@@ -398,6 +427,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '/fetch &lt;url&gt; — descargar URL al contexto',
       '/search &lt;query&gt; — buscar en la web',
       '/cluster [historial] — estado del cluster (n2/n3/n4) o sus incidencias',
+      '/caidos — ¿hay algún servicio caído? (vía Prometheus)',
       '/ha &lt;texto&gt; — pedir algo a Home Assistant',
       '/anuncia &lt;destino&gt; &lt;texto&gt; — anuncio en Alexa (o sin destino para elegir)',
       '/reset — borrar la conversación',
@@ -426,6 +456,22 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
         } catch (error) {
           logger.warn({ chatId, err: error.message }, 'NL cluster query failed');
           await indicator.finish(`❌ No pude consultar el cluster: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+        }
+        return;
+      }
+    }
+
+    // Natural-language "is anything down?" queries are answered from Prometheus,
+    // also without going through the LLM.
+    if (prometheusClient) {
+      const prometheusIntent = parsePrometheusIntent(text);
+      if (prometheusIntent) {
+        const indicator = await createThinkingIndicator(bot, chatId, { text: '📊 Consultando Prometheus…', logger });
+        try {
+          await indicator.finish(await buildPrometheusReply(), { parse_mode: 'HTML' });
+        } catch (error) {
+          logger.warn({ chatId, err: error.message }, 'NL prometheus query failed');
+          await indicator.finish(`❌ No pude consultar Prometheus: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
         }
         return;
       }

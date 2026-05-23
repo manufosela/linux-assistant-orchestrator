@@ -69,6 +69,13 @@ services:
       CLUSTER_N2_IP: ${CLUSTER_N2_IP:-}
       CLUSTER_N3_IP: ${CLUSTER_N3_IP:-}
       CLUSTER_N4_IP: ${CLUSTER_N4_IP:-}
+
+      # --- Prometheus down-check (optional; on-demand "is anything down?") ---
+      # Opt-in: set PROMETHEUS_ENABLED=true and PROMETHEUS_BASE_URL to your
+      # Prometheus HTTP endpoint (e.g. http://<host>:9090).
+      PROMETHEUS_ENABLED: ${PROMETHEUS_ENABLED:-false}
+      PROMETHEUS_BASE_URL: ${PROMETHEUS_BASE_URL:-}
+      PROMETHEUS_TIMEOUT_MS: ${PROMETHEUS_TIMEOUT_MS:-8000}
     volumes:
       - ./data/downloads:/data/downloads:rw
       - ./data/config:/data/config:rw

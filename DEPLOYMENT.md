@@ -105,10 +105,15 @@ is enabled, `Cluster watcher started`.
 | `CLUSTER_N2_IP` | if cluster | — | IP of node n2 |
 | `CLUSTER_N3_IP` | if cluster | — | IP of node n3 |
 | `CLUSTER_N4_IP` | if cluster | — | IP of node n4 |
+| `PROMETHEUS_ENABLED` | no | `false` | Enable on-demand "is anything down?" checks |
+| `PROMETHEUS_BASE_URL` | if prometheus | — | Prometheus base URL, e.g. `http://<ip>:9090` |
+| `PROMETHEUS_TIMEOUT_MS` | no | `8000` | Prometheus query timeout |
 | `CONTAINER_NAME` | no | `luis` | Docker container name |
 
 When `CLUSTER_ENABLED=true`, the three `CLUSTER_N*_IP` values are **required**;
 the daemon fails fast at startup with an actionable message if any is missing.
+The same applies to `PROMETHEUS_BASE_URL` when `PROMETHEUS_ENABLED` is not
+`false` — set the URL or set `PROMETHEUS_ENABLED=false`.
 
 ## 7. Cluster watcher topology
 
@@ -130,7 +135,27 @@ CLI: `luis cluster status` (live table) / `luis cluster history` (last 10
 incidents). Telegram: `/cluster`, `/cluster historial`, or natural language
 ("estado del cluster").
 
-## 8. Watchtower → Telegram through LUIS (optional)
+## 8. Prometheus down-check (optional)
+
+Separate from the cluster watcher, LUIS can answer **"is anything down?"** on
+demand by querying a Prometheus instance — no watcher, no proactive alerts, it
+only runs when the user asks. It combines three signals: `up==0` (scrape
+targets / exporters down), `probe_success==0` (HTTP services checked via
+blackbox-exporter) and Prometheus alerts in the `firing` state.
+
+Opt-in: set `PROMETHEUS_ENABLED=true` and `PROMETHEUS_BASE_URL` to your
+Prometheus endpoint. If Prometheus runs in a different Docker network than
+LUIS, point `PROMETHEUS_BASE_URL` at the **host IP** (e.g.
+`http://<host-ip>:9090`), not a Docker service name unreachable from LUIS's
+network.
+
+Channels:
+- Telegram: `/caidos`, or natural language ("¿hay algo caído?", "¿está todo bien?").
+- Web: a down-check question to `POST /api/ask` or `POST /api/chat` is answered
+  from Prometheus instead of the LLM; `GET /api/prometheus/status` returns the
+  structured report as JSON.
+
+## 9. Watchtower → Telegram through LUIS (optional)
 
 Instead of letting Watchtower notify Telegram directly (raw text, separate
 formatting), point it at LUIS so its messages go through the same notification
@@ -192,7 +217,7 @@ curl -s -X POST "http://<luis-host>:<port>/api/hooks/watchtower?token=<secret>" 
 
 You should get the formatted message in your Telegram notify chat.
 
-## 9. Updating an existing deployment
+## 10. Updating an existing deployment
 
 **Preferred — git on the server:**
 

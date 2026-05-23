@@ -10,10 +10,11 @@ The assistant is designed around a **local-first, privacy-first** principle: pri
 
 - **CLI** (`luis`) — interactive REPL plus non-interactive subcommands, sharing the same services as Telegram and the workers. Configurable per-user via `~/.config/luis/config.json`.
 - **Local web UI** — token-protected HTTP API + minimal vanilla-JS dashboard, reachable from the LAN
-- **Telegram bot** — commands `/start`, `/status`, `/llm_status`, `/downloads_rules`, `/fetch`, `/search`, `/ha`, `/anuncia`, `/cluster`, `/reset`, `/help`, plus a natural-language fallback to the local LLM
+- **Telegram bot** — commands `/start`, `/status`, `/llm_status`, `/downloads_rules`, `/fetch`, `/search`, `/ha`, `/anuncia`, `/cluster`, `/caidos`, `/reset`, `/help`, plus a natural-language fallback to the local LLM
 - **Authorized chat validation** — only configured Telegram chat IDs can use the bot
 - **Home Assistant integration** — natural-language control and Alexa/Echo announcements via HA
 - **Cluster watcher** — monitors remote nodes/services and alerts on Telegram on failure/recovery (see DEPLOYMENT.md)
+- **Prometheus down-check** — answers "is anything down?" on demand from a Prometheus instance (`up==0`, `probe_success==0`, firing alerts); no watcher, no proactive alerts (see DEPLOYMENT.md)
 - **Downloads watcher** — monitors a directory and organizes new files automatically
 - **Rule-based file classifier** — classifies files by extension using a JSON config
 - **LLM file classifier** — optional fallback to local LLM for unmatched files
@@ -361,7 +362,9 @@ All `/api/*` endpoints require the access token via:
 |---|---|
 | `GET /api/status` | Assistant name, uptime, modules. |
 | `GET /api/llm/status` | Health of the local LLM provider. Returns 503 when unhealthy. |
-| `POST /api/ask` | Body: `{ "prompt": "..." }`. Calls `llmService.generateText` with `module='web'`, `private=true`. |
+| `POST /api/ask` | Body: `{ "prompt": "..." }`. Calls `llmService.generateText` with `module='web'`, `private=true`. A natural-language "is anything down?" prompt is answered from Prometheus instead of the LLM. |
+| `POST /api/chat` | Body: `{ "messages": [...] }`. Multi-turn chat. Like `/api/ask`, a down-check question in the last user message is answered from Prometheus. |
+| `GET /api/prometheus/status` | Structured "is anything down?" report from Prometheus (`{ downTargets, downProbes, firingAlerts, anythingDown, ... }`). 503 if the integration is disabled. |
 | `GET /api/downloads/rules` | Lists configured download rules. |
 | `POST /api/downloads/organize` | Placeholder until the organizer service is wired. |
 | `GET /` | Serves the static UI from `src/apps/web/public/`. |
