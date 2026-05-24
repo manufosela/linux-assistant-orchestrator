@@ -32,7 +32,7 @@ function mockQuery({ byId = null, latest = null } = {}) {
 }
 
 function mockLlm(summary) {
-  return { generateText: async () => summary };
+  return { chat: async () => summary };
 }
 
 describe('inbox-reader.read', () => {
@@ -123,19 +123,63 @@ describe('inbox-reader.summarise', () => {
   });
 
   it('trunca texto largo a maxInputChars', async () => {
-    let passedPrompt = null;
+    let passedMessages = null;
     const longText = 'x'.repeat(20000);
     const path = await seedExtractedFile(longText);
     const item = { id: 'a', dir: '/tmp', meta: { extraction: { path } } };
     const reader = createInboxReader({
       inboxQuery: mockQuery({ byId: item }),
-      llmService: { generateText: async (prompt) => { passedPrompt = prompt; return 'resumen'; } },
+      llmService: { chat: async (msgs) => { passedMessages = msgs; return 'resumen'; } },
     });
 
     await reader.summarise({ id: 'a', maxInputChars: 100 });
 
-    // Prompt includes "Texto a resumir:\n\n" + 100 chars of 'x'
-    assert.ok(passedPrompt.length < 200);
+    // user message contains "Texto a resumir:\n\n" + 100 chars of 'x'
+    const userMsg = passedMessages.find((m) => m.role === 'user');
+    assert.ok(userMsg.content.length < 200);
+  });
+
+  it('summariseModel override se pasa al llm', async () => {
+    let passedOptions = null;
+    const path = await seedExtractedFile('texto');
+    const item = { id: 'a', dir: '/tmp', meta: { extraction: { path } } };
+    const reader = createInboxReader({
+      inboxQuery: mockQuery({ byId: item }),
+      llmService: { chat: async (_msgs, opts) => { passedOptions = opts; return 'resumen'; } },
+      summariseModel: 'coder',
+    });
+
+    await reader.summarise({ id: 'a' });
+
+    assert.equal(passedOptions.model, 'coder');
+  });
+
+  it('sin summariseModel override no se pasa model al llm', async () => {
+    let passedOptions = null;
+    const path = await seedExtractedFile('texto');
+    const item = { id: 'a', dir: '/tmp', meta: { extraction: { path } } };
+    const reader = createInboxReader({
+      inboxQuery: mockQuery({ byId: item }),
+      llmService: { chat: async (_msgs, opts) => { passedOptions = opts; return 'resumen'; } },
+    });
+
+    await reader.summarise({ id: 'a' });
+
+    assert.equal(passedOptions.model, undefined);
+  });
+
+  it('LLM devuelve string vacío → reason="llm-empty"', async () => {
+    const path = await seedExtractedFile('texto');
+    const item = { id: 'a', dir: '/tmp', meta: { extraction: { path } } };
+    const reader = createInboxReader({
+      inboxQuery: mockQuery({ byId: item }),
+      llmService: { chat: async () => '' },
+    });
+
+    const result = await reader.summarise({ id: 'a' });
+
+    assert.equal(result.summary, null);
+    assert.equal(result.reason, 'llm-empty');
   });
 
   it('LLM lanza → summary null + reason="llm-failed"', async () => {
@@ -143,7 +187,7 @@ describe('inbox-reader.summarise', () => {
     const item = { id: 'a', dir: '/tmp', meta: { extraction: { path } } };
     const reader = createInboxReader({
       inboxQuery: mockQuery({ byId: item }),
-      llmService: { generateText: async () => { throw new Error('LLM down'); } },
+      llmService: { chat: async () => { throw new Error('LLM down'); } },
     });
 
     const result = await reader.summarise({ id: 'a' });
@@ -156,7 +200,7 @@ describe('inbox-reader.summarise', () => {
     let called = false;
     const reader = createInboxReader({
       inboxQuery: mockQuery(),
-      llmService: { generateText: async () => { called = true; return 'x'; } },
+      llmService: { chat: async () => { called = true; return 'x'; } },
     });
 
     const result = await reader.summarise({ id: 'x' });

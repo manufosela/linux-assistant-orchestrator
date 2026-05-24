@@ -625,6 +625,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
   function noContentReply(result) {
     if (result.reason === 'no-item') return '📭 No encontré el item.';
     if (result.reason === 'no-extraction') return '📭 Ese item no tiene contenido extraído (foto sin OCR, voz sin transcribir, etc.).';
+    if (result.reason === 'llm-empty') return '⚠️ El LLM devolvió un resumen vacío. Intenta con otro item o cambia INBOX_SUMMARISE_MODEL.';
     if (result.reason?.startsWith('llm-failed')) return `❌ El LLM falló: ${escapeHtml(result.reason)}`;
     if (result.reason?.startsWith('read-failed')) return `❌ No pude leer el fichero: ${escapeHtml(result.reason)}`;
     return '📭 No hay items con contenido extraído todavía.';

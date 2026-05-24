@@ -11,7 +11,7 @@ import { readFile } from 'node:fs/promises';
  * }} deps
  * @returns {InboxReader}
  */
-export function createInboxReader({ inboxQuery, llmService, logger }) {
+export function createInboxReader({ inboxQuery, llmService, summariseModel = null, logger }) {
   if (!inboxQuery) throw new Error('createInboxReader requires inboxQuery');
   if (!llmService) throw new Error('createInboxReader requires llmService');
 
@@ -46,14 +46,21 @@ export function createInboxReader({ inboxQuery, llmService, logger }) {
     const readResult = await read({ id, categories });
     if (!readResult.text) return { ...readResult, summary: null };
 
-    // Trim input to fit the local LLM's context. Local "fast" model has ~8k
-    // tokens; ~12000 chars ≈ ~3000 tokens — leaves room for the prompt + reply.
+    // Trim input to fit the local LLM's context. ~12000 chars ≈ ~3000 tokens —
+    // leaves room for the prompt + reply within typical 8k-token contexts.
     const input = readResult.text.slice(0, maxInputChars);
     try {
-      const summary = await llmService.generateText(
-        `Texto a resumir:\n\n${input}`,
+      // Use chat() (not generateText) so we can override the model. The default
+      // "fast" model on the local cluster returns empty content for these
+      // prompts; we override to a model known to work for Spanish prose
+      // (configurable via INBOX_SUMMARISE_MODEL).
+      const summary = await llmService.chat(
+        [
+          { role: 'system', content: SUMMARISE_SYSTEM_PROMPT },
+          { role: 'user', content: `Texto a resumir:\n\n${input}` },
+        ],
         {
-          systemPrompt: SUMMARISE_SYSTEM_PROMPT,
+          ...(summariseModel ? { model: summariseModel } : {}),
           module: 'inbox-reader',
           operation: 'summarise',
           private: true,
@@ -61,7 +68,11 @@ export function createInboxReader({ inboxQuery, llmService, logger }) {
           maxTokens: 500,
         },
       );
-      return { ...readResult, summary: summary.trim() };
+      const trimmed = (summary ?? '').trim();
+      if (!trimmed) {
+        return { ...readResult, summary: null, reason: 'llm-empty' };
+      }
+      return { ...readResult, summary: trimmed };
     } catch (error) {
       logger?.warn({ id: readResult.item.id, err: error.message }, 'inbox-reader summarise failed');
       return { ...readResult, summary: null, reason: `llm-failed: ${error.message}` };

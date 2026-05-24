@@ -236,7 +236,12 @@ async function main() {
   // so we skip the router/markitdown and store the result directly.
   const urlCapture = createUrlCapture({ urlFetcher, inboxStore, logger });
   const inboxQuery = createInboxQuery({ inboxStore, logger });
-  const inboxReader = createInboxReader({ inboxQuery, llmService, logger });
+  const inboxReader = createInboxReader({
+    inboxQuery,
+    llmService,
+    summariseModel: config.inbox.summariseModel || null,
+    logger,
+  });
 
   // Telegram bot
   let bot = null;
