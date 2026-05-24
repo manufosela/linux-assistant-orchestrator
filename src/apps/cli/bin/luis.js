@@ -23,6 +23,7 @@ import { createClusterHistoryStore } from '../../../modules/cluster/cluster-hist
 import { createClusterStatusService } from '../../../modules/cluster/cluster-status-service.js';
 import { createGmailClient } from '../../../modules/email/gmail-client.js';
 import { createGoogleCalendarClient } from '../../../modules/calendar/google-calendar-client.js';
+import { createGoogleDriveClient } from '../../../modules/drive/google-drive-client.js';
 import { createCliApp } from '../create-cli-app.js';
 import { loadUserConfig } from '../user-config-loader.js';
 
@@ -138,6 +139,7 @@ async function main() {
   let googleAuth;
   let gmailClient;
   let calendarClient;
+  let driveClient;
   if (config.google.credentialsPath && config.google.tokensPath) {
     googleAuth = createGoogleAuth({
       credentialsPath: config.google.credentialsPath,
@@ -146,6 +148,7 @@ async function main() {
     });
     gmailClient = createGmailClient({ googleAuth, llmService, logger });
     calendarClient = createGoogleCalendarClient({ googleAuth, logger });
+    driveClient = createGoogleDriveClient({ googleAuth, logger });
   }
   const clusterStatus = createClusterStatusService({
     healthChecker: createClusterHealthChecker({ logger }),
@@ -166,6 +169,7 @@ async function main() {
     clusterStatus,
     gmailClient,
     calendarClient,
+    driveClient,
     logger,
     appName: APP_NAME,
     appVersion: pkg.version,

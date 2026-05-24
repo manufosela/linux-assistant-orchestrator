@@ -83,7 +83,7 @@ export function createCliApp(deps) {
  * }} deps
  */
 function registerCommands(deps) {
-  const { router, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, googleAuth, clusterStatus, gmailClient, calendarClient, logger, remoteCodeTasksEnabled } = deps;
+  const { router, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, googleAuth, clusterStatus, gmailClient, calendarClient, driveClient, logger, remoteCodeTasksEnabled } = deps;
 
   router.register('status', async ({ renderer }) => {
     const status = statusService.getStatus();
@@ -478,6 +478,79 @@ function registerCommands(deps) {
       return { exitCode: 1 };
     }
   }, { description: 'Últimas 10 incidencias del cluster (caídas y recuperaciones)' });
+
+  router.register('drive list', async ({ args, renderer }) => {
+    if (!driveClient) {
+      renderer.error('Drive no configurado. Hay que ejecutar `luis google login` primero.');
+      return { exitCode: 1 };
+    }
+    const folderId = args[0] || 'root';
+    try {
+      const items = await driveClient.listFolder(folderId);
+      if (items.length === 0) { renderer.print('(carpeta vacía)'); return { exitCode: 0 }; }
+      for (const it of items) {
+        const icon = it.isFolder ? '📁' : '📄';
+        renderer.print(`${icon} ${it.name}    [${it.id}]`);
+      }
+      return { exitCode: 0 };
+    } catch (error) {
+      logger.warn({ err: error?.message }, 'drive list failed');
+      renderer.error(`Drive list falló: ${error?.message ?? 'desconocido'}`);
+      return { exitCode: 1 };
+    }
+  }, { description: 'Lista los hijos de una carpeta de Drive (root por defecto)' });
+
+  router.register('drive search', async ({ args, renderer }) => {
+    if (!driveClient) {
+      renderer.error('Drive no configurado. Hay que ejecutar `luis google login` primero.');
+      return { exitCode: 1 };
+    }
+    const query = args.join(' ').trim();
+    if (!query) {
+      renderer.error('Uso: luis drive search <texto>');
+      return { exitCode: 1 };
+    }
+    try {
+      const items = await driveClient.searchByName(query);
+      if (items.length === 0) { renderer.print(`(sin resultados para "${query}")`); return { exitCode: 0 }; }
+      for (const it of items) {
+        const icon = it.isFolder ? '📁' : '📄';
+        renderer.print(`${icon} ${it.name}    [${it.id}]`);
+      }
+      return { exitCode: 0 };
+    } catch (error) {
+      logger.warn({ err: error?.message }, 'drive search failed');
+      renderer.error(`Drive search falló: ${error?.message ?? 'desconocido'}`);
+      return { exitCode: 1 };
+    }
+  }, { description: 'Busca por nombre en todo Drive' });
+
+  router.register('drive info', async ({ args, renderer }) => {
+    if (!driveClient) {
+      renderer.error('Drive no configurado. Hay que ejecutar `luis google login` primero.');
+      return { exitCode: 1 };
+    }
+    const fileId = args[0];
+    if (!fileId) {
+      renderer.error('Uso: luis drive info <fileId>');
+      return { exitCode: 1 };
+    }
+    try {
+      const it = await driveClient.getMetadata(fileId);
+      const icon = it.isFolder ? '📁' : '📄';
+      renderer.print(`${icon} ${it.name}`);
+      renderer.print(`   id: ${it.id}`);
+      renderer.print(`   mime: ${it.mimeType}`);
+      renderer.print(`   modificado: ${it.modifiedTime}`);
+      if (it.size !== null) renderer.print(`   tamaño: ${it.size} bytes`);
+      if (it.webViewLink) renderer.print(`   url: ${it.webViewLink}`);
+      return { exitCode: 0 };
+    } catch (error) {
+      logger.warn({ err: error?.message }, 'drive info failed');
+      renderer.error(`Drive info falló: ${error?.message ?? 'desconocido'}`);
+      return { exitCode: 1 };
+    }
+  }, { description: 'Muestra metadata de un fichero por su ID' });
 
   router.register('help', async () => {
     router.printHelp();
