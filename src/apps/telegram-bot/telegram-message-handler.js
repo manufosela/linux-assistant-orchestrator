@@ -5,6 +5,8 @@ import { parseClusterIntent } from '../../modules/cluster/cluster-intent.js';
 import { formatClusterStatus, formatClusterHistory } from '../../modules/cluster/cluster-status-service.js';
 import { parsePrometheusIntent } from '../../modules/prometheus/prometheus-intent.js';
 import { formatDownReport } from '../../modules/prometheus/prometheus-formatter.js';
+import { parseEmailIntent } from '../../modules/email/email-intent.js';
+import { parseCalendarIntent } from '../../modules/calendar/calendar-intent.js';
 
 const ANNOUNCE_PENDING_TTL_MS = 5 * 60 * 1000;
 const ANNOUNCE_CALLBACK_PREFIX = 'anuncia:';
@@ -34,7 +36,7 @@ const SYSTEM_PROMPT =
  * @param {import('pino').Logger} deps.logger
  * @returns {void}
  */
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, calendarClient, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -416,6 +418,41 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     }
   });
 
+  router.register('/correo', async (message) => {
+    const chatId = message.chat.id;
+    if (!gmailClient) {
+      await bot.sendMessage(chatId, 'Gmail no configurado. Hay que ejecutar `luis google login` y configurar los paths.');
+      return;
+    }
+    const args = extractArgs(message.text ?? '').trim();
+    const indicator = await createThinkingIndicator(bot, chatId, { text: '📬 Consultando Gmail…', logger });
+    try {
+      const result = await dispatchEmailRequest(args, gmailClient);
+      await indicator.finish(formatEmailReply(result), { parse_mode: 'HTML', disable_web_page_preview: true });
+    } catch (error) {
+      logger.warn({ chatId, err: error.message }, '/correo failed');
+      await indicator.finish(`❌ No pude consultar el correo: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+    }
+  });
+
+  router.register('/agenda', async (message) => {
+    const chatId = message.chat.id;
+    if (!calendarClient) {
+      await bot.sendMessage(chatId, 'Calendar no configurado. Hay que ejecutar `luis google login` primero.');
+      return;
+    }
+    const args = extractArgs(message.text ?? '').trim().toLowerCase();
+    const which = pickCalendarSlot(args);
+    const indicator = await createThinkingIndicator(bot, chatId, { text: '🗓️ Consultando agenda…', logger });
+    try {
+      const reply = await runCalendarQuery(which, calendarClient);
+      await indicator.finish(reply, { parse_mode: 'HTML', disable_web_page_preview: true });
+    } catch (error) {
+      logger.warn({ chatId, err: error.message }, '/agenda failed');
+      await indicator.finish(`❌ No pude consultar la agenda: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+    }
+  });
+
   router.register('/help', async (message) => {
     const chatId = message.chat.id;
     const text = [
@@ -430,11 +467,15 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '/caidos — ¿hay algún servicio caído? (vía Prometheus)',
       '/ha &lt;texto&gt; — pedir algo a Home Assistant',
       '/anuncia &lt;destino&gt; &lt;texto&gt; — anuncio en Alexa (o sin destino para elegir)',
+      '/correo [hoy|de &lt;persona&gt;] — correos no leídos de hoy o de un remitente',
+      '/agenda [hoy|mañana|semana|próximo] — eventos del calendario',
       '/reset — borrar la conversación',
       '/status — estado del asistente',
       '/llm_status — estado del LLM',
       '/downloads_rules — reglas de descarga',
       '/help — esta ayuda',
+      '',
+      '<i>También entiendo en lenguaje natural: "correos de hoy", "correos de banco", "agenda de hoy", "próxima reunión", etc.</i>',
     ].join('\n');
     await bot.sendMessage(chatId, text, { parse_mode: 'HTML' });
   });
@@ -461,6 +502,23 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       }
     }
 
+    // Natural-language email queries ("correos de hoy", "correos de Banco")
+    // are answered from Gmail without going through the LLM.
+    if (gmailClient) {
+      const emailIntent = parseEmailIntent(text);
+      if (emailIntent) {
+        const indicator = await createThinkingIndicator(bot, chatId, { text: '📬 Consultando Gmail…', logger });
+        try {
+          const result = await dispatchEmailIntent(emailIntent, gmailClient);
+          await indicator.finish(formatEmailReply(result), { parse_mode: 'HTML', disable_web_page_preview: true });
+        } catch (error) {
+          logger.warn({ chatId, err: error.message }, 'email intent fallback failed');
+          await indicator.finish(`❌ No pude consultar el correo: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+        }
+        return;
+      }
+    }
+
     // Natural-language "is anything down?" queries are answered from Prometheus,
     // also without going through the LLM.
     if (prometheusClient) {
@@ -472,6 +530,23 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
         } catch (error) {
           logger.warn({ chatId, err: error.message }, 'NL prometheus query failed');
           await indicator.finish(`❌ No pude consultar Prometheus: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+        }
+        return;
+      }
+    }
+
+    // Natural-language calendar queries ("agenda de hoy", "qué tengo mañana")
+    // are answered from Google Calendar without going through the LLM.
+    if (calendarClient) {
+      const calIntent = parseCalendarIntent(text);
+      if (calIntent) {
+        const indicator = await createThinkingIndicator(bot, chatId, { text: '🗓️ Consultando agenda…', logger });
+        try {
+          const reply = await runCalendarQuery(calIntent.intent, calendarClient);
+          await indicator.finish(reply, { parse_mode: 'HTML', disable_web_page_preview: true });
+        } catch (error) {
+          logger.warn({ chatId, err: error.message }, 'calendar intent fallback failed');
+          await indicator.finish(`❌ No pude consultar la agenda: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
         }
         return;
       }
@@ -509,6 +584,140 @@ function escapeHtml(input) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+/**
+ * Routes the argument string of `/correo` to the right Gmail call.
+ *
+ *   ""                  → unread today
+ *   "hoy" / "today"     → unread today
+ *   "de <persona>"      → from sender
+ *   "from <persona>"    → from sender
+ *   "<persona>"         → from sender (resto del texto como remitente)
+ *
+ * @param {string} args
+ * @param {import('../../modules/email/gmail-client.js').GmailClient} client
+ * @returns {Promise<{ kind: 'today' | 'from', sender?: string, emails: import('../../modules/email/gmail-client.js').EmailSummary[] }>}
+ */
+async function dispatchEmailRequest(args, client) {
+  const trimmed = args.trim();
+  if (!trimmed || /^(?:hoy|today|pendientes?)$/i.test(trimmed)) {
+    return { kind: 'today', emails: await client.unreadToday() };
+  }
+  const fromMatch = trimmed.match(/^(?:de|from)\s+(.+)$/i);
+  const sender = fromMatch ? fromMatch[1].trim() : trimmed;
+  return { kind: 'from', sender, emails: await client.fromSender({ sender }) };
+}
+
+/**
+ * Variant of dispatchEmailRequest that accepts the typed intent from parseEmailIntent.
+ *
+ * @param {import('../../modules/email/email-intent.js').EmailIntent} intent
+ * @param {import('../../modules/email/gmail-client.js').GmailClient} client
+ */
+async function dispatchEmailIntent(intent, client) {
+  if (intent.intent === 'today') {
+    return { kind: 'today', emails: await client.unreadToday() };
+  }
+  return { kind: 'from', sender: intent.sender, emails: await client.fromSender({ sender: intent.sender }) };
+}
+
+/**
+ * Renders the result of dispatchEmailRequest as Telegram-friendly HTML.
+ *
+ * @param {{ kind: 'today' | 'from', sender?: string, emails: import('../../modules/email/gmail-client.js').EmailSummary[] }} result
+ * @returns {string}
+ */
+function formatEmailReply(result) {
+  if (result.emails.length === 0) {
+    return result.kind === 'today'
+      ? '📭 No tienes correos no leídos de hoy.'
+      : `📭 No encuentro correos de "${escapeHtml(result.sender ?? '')}".`;
+  }
+  const heading = result.kind === 'today'
+    ? `📬 <b>${result.emails.length} correo${result.emails.length === 1 ? '' : 's'} no leído${result.emails.length === 1 ? '' : 's'}:</b>`
+    : `📬 <b>${result.emails.length} correo${result.emails.length === 1 ? '' : 's'} de "${escapeHtml(result.sender ?? '')}":</b>`;
+  const lines = result.emails.map((email, i) => {
+    const subject = escapeHtml(email.subject || '(sin asunto)');
+    const from = escapeHtml(email.from || '(desconocido)');
+    const snippet = escapeHtml(email.snippet || '');
+    return `${i + 1}. <b>${subject}</b>\n   <i>${from}</i>${snippet ? `\n   ${snippet}` : ''}`;
+  });
+  return `${heading}\n\n${lines.join('\n\n')}`;
+}
+
+/**
+ * Maps the textual argument of `/agenda` (e.g. "hoy", "mañana") to a `CalendarIntent['intent']`.
+ *
+ * @param {string} args
+ * @returns {'today' | 'tomorrow' | 'week' | 'next'}
+ */
+function pickCalendarSlot(args) {
+  if (!args || /^(?:hoy|today)$/.test(args)) return 'today';
+  if (/^(?:manana|mañana|tomorrow)$/.test(args)) return 'tomorrow';
+  if (/(?:semana|week)/.test(args)) return 'week';
+  if (/(?:proxim[oa]|siguiente|next)/.test(args)) return 'next';
+  return 'today';
+}
+
+/**
+ * Renders the calendar reply in Telegram HTML for the chosen slot.
+ *
+ * @param {'today' | 'tomorrow' | 'week' | 'next'} which
+ * @param {import('../../modules/calendar/google-calendar-client.js').GoogleCalendarClient} client
+ * @returns {Promise<string>}
+ */
+async function runCalendarQuery(which, client) {
+  if (which === 'next') {
+    const event = await client.next();
+    if (!event) return '🗓️ No tienes eventos próximos en los siguientes 30 días.';
+    return `🗓️ <b>Próximo evento:</b>\n\n${formatEventTelegram(event)}`;
+  }
+  const events = await client[which]();
+  const labels = { today: 'hoy', tomorrow: 'mañana', week: 'esta semana' };
+  if (events.length === 0) return `🗓️ No tienes eventos ${labels[which]}.`;
+  const heading = `🗓️ <b>${events.length} evento${events.length === 1 ? '' : 's'} ${labels[which]}:</b>`;
+  const items = events.map((e, i) => `${i + 1}. ${formatEventTelegram(e)}`).join('\n\n');
+  return `${heading}\n\n${items}`;
+}
+
+/**
+ * Formatea un evento como HTML compacto para Telegram.
+ *
+ * @param {import('../../modules/calendar/google-calendar-client.js').CalendarEvent} event
+ * @returns {string}
+ */
+function formatEventTelegram(event) {
+  const title = `<b>${escapeHtml(event.summary)}</b>`;
+  const when = `🕐 ${escapeHtml(formatEventTimeShort(event))}`;
+  const lines = [title, when];
+  if (event.location) lines.push(`📍 ${escapeHtml(event.location)}`);
+  if (event.attendees.length > 0) {
+    const sample = event.attendees.slice(0, 3).join(', ');
+    const more = event.attendees.length > 3 ? ` (+${event.attendees.length - 3})` : '';
+    lines.push(`👥 ${escapeHtml(sample)}${more}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * @param {import('../../modules/calendar/google-calendar-client.js').CalendarEvent} event
+ * @returns {string}
+ */
+function formatEventTimeShort(event) {
+  if (event.allDay) return `${event.start} (todo el día)`;
+  try {
+    const start = new Date(event.start);
+    const end = event.end ? new Date(event.end) : null;
+    const dayFmt = new Intl.DateTimeFormat('es-ES', { weekday: 'short', day: '2-digit', month: 'short' });
+    const timeFmt = new Intl.DateTimeFormat('es-ES', { hour: '2-digit', minute: '2-digit' });
+    const dayPart = dayFmt.format(start);
+    const startTime = timeFmt.format(start);
+    const endTime = end ? timeFmt.format(end) : '';
+    return `${dayPart} ${startTime}${endTime ? `–${endTime}` : ''}`;
+  } catch {
+    return event.start;
+  }
 }
 
 /**

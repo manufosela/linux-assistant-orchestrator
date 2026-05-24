@@ -83,7 +83,7 @@ export function createCliApp(deps) {
  * }} deps
  */
 function registerCommands(deps) {
-  const { router, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, googleAuth, clusterStatus, logger, remoteCodeTasksEnabled } = deps;
+  const { router, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, googleAuth, clusterStatus, gmailClient, calendarClient, logger, remoteCodeTasksEnabled } = deps;
 
   router.register('status', async ({ renderer }) => {
     const status = statusService.getStatus();
@@ -128,13 +128,118 @@ function registerCommands(deps) {
     return { exitCode: 0 };
   }, { description: 'Run the downloads organizer (placeholder until the service is wired)' });
 
-  router.register('mail summary', async ({ renderer }) => {
-    renderer.warning('Email integration is not implemented yet.');
-  }, { description: 'Summarize email (not implemented yet)' });
+  router.register('mail today', async ({ flags, renderer }) => {
+    if (!gmailClient) {
+      renderer.error('Gmail no configurado. Ejecuta `luis google login` primero y comprueba que google.credentialsPath / google.tokensPath están en la config.');
+      return { exitCode: 1 };
+    }
+    try {
+      const maxResults = Number(flags.max ?? flags.limit ?? 10) || 10;
+      const emails = await gmailClient.unreadToday({ maxResults });
+      if (emails.length === 0) {
+        renderer.print('No tienes correos no leídos de hoy.');
+        return { exitCode: 0 };
+      }
+      renderEmailList(renderer, emails);
+      if (flags.summary && llmService) {
+        renderer.print('');
+        renderer.info('Resumiendo con el LLM…');
+        const summary = await gmailClient.summarize(emails);
+        if (summary) {
+          renderer.print('');
+          renderer.print(summary);
+        }
+      }
+      return { exitCode: 0 };
+    } catch (error) {
+      logger.warn({ err: error?.message }, 'CLI mail today failed');
+      renderer.error(`Mail today: ${error?.message ?? 'error desconocido'}`);
+      return { exitCode: 1 };
+    }
+  }, { description: 'Lista los correos no leídos de hoy (--summary para resumir con el LLM)' });
+
+  router.register('mail from', async ({ args, flags, renderer }) => {
+    const sender = args.join(' ').trim();
+    if (!sender) {
+      renderer.error('Uso: luis mail from <remitente>   (nombre, email parcial o dominio)');
+      return { exitCode: 1 };
+    }
+    if (!gmailClient) {
+      renderer.error('Gmail no configurado. Ejecuta `luis google login` primero.');
+      return { exitCode: 1 };
+    }
+    try {
+      const maxResults = Number(flags.max ?? flags.limit ?? 10) || 10;
+      const emails = await gmailClient.fromSender({ sender, maxResults });
+      if (emails.length === 0) {
+        renderer.print(`No encuentro correos de "${sender}".`);
+        return { exitCode: 0 };
+      }
+      renderEmailList(renderer, emails);
+      return { exitCode: 0 };
+    } catch (error) {
+      logger.warn({ err: error?.message, sender }, 'CLI mail from failed');
+      renderer.error(`Mail from: ${error?.message ?? 'error desconocido'}`);
+      return { exitCode: 1 };
+    }
+  }, { description: 'Lista correos de un remitente concreto (luis mail from "banco")' });
 
   router.register('calendar today', async ({ renderer }) => {
-    renderer.warning('Calendar integration is not implemented yet.');
-  }, { description: 'Show today\'s calendar (not implemented yet)' });
+    return runCalendar('today', renderer);
+  }, { description: 'Eventos del calendario de hoy' });
+
+  router.register('calendar tomorrow', async ({ renderer }) => {
+    return runCalendar('tomorrow', renderer);
+  }, { description: 'Eventos del calendario de mañana' });
+
+  router.register('calendar week', async ({ renderer }) => {
+    return runCalendar('week', renderer);
+  }, { description: 'Eventos de los próximos 7 días' });
+
+  router.register('calendar next', async ({ renderer }) => {
+    if (!calendarClient) {
+      renderer.error('Calendar no configurado. Ejecuta `luis google login` primero.');
+      return { exitCode: 1 };
+    }
+    try {
+      const event = await calendarClient.next();
+      if (!event) {
+        renderer.print('No tienes eventos próximos en los siguientes 30 días.');
+        return { exitCode: 0 };
+      }
+      renderEventList(renderer, [event]);
+      return { exitCode: 0 };
+    } catch (error) {
+      logger.warn({ err: error?.message }, 'CLI calendar next failed');
+      renderer.error(`Calendar next: ${error?.message ?? 'error desconocido'}`);
+      return { exitCode: 1 };
+    }
+  }, { description: 'Próximo evento del calendario (próximos 30 días)' });
+
+  /**
+   * @param {'today'|'tomorrow'|'week'} which
+   * @param {import('./terminal-renderer.js').TerminalRenderer} renderer
+   */
+  async function runCalendar(which, renderer) {
+    if (!calendarClient) {
+      renderer.error('Calendar no configurado. Ejecuta `luis google login` primero.');
+      return { exitCode: 1 };
+    }
+    try {
+      const events = await calendarClient[which]();
+      if (events.length === 0) {
+        const labels = { today: 'hoy', tomorrow: 'mañana', week: 'esta semana' };
+        renderer.print(`No tienes eventos ${labels[which]}.`);
+        return { exitCode: 0 };
+      }
+      renderEventList(renderer, events);
+      return { exitCode: 0 };
+    } catch (error) {
+      logger.warn({ err: error?.message, which }, `CLI calendar ${which} failed`);
+      renderer.error(`Calendar ${which}: ${error?.message ?? 'error desconocido'}`);
+      return { exitCode: 1 };
+    }
+  }
 
   router.register('pg task', async ({ args, renderer }) => {
     const taskId = args[0];
@@ -377,6 +482,69 @@ function registerCommands(deps) {
   router.register('help', async () => {
     router.printHelp();
   }, { description: 'Show this help' });
+}
+
+/**
+ * Renders a list of calendar events in plain text.
+ *
+ * @param {import('./terminal-renderer.js').TerminalRenderer} renderer
+ * @param {import('../../modules/calendar/google-calendar-client.js').CalendarEvent[]} events
+ */
+function renderEventList(renderer, events) {
+  events.forEach((event, i) => {
+    if (i > 0) renderer.print('');
+    renderer.print(`${i + 1}. ${event.summary}`);
+    renderer.print(`   Cuándo: ${formatEventTime(event)}`);
+    if (event.location) renderer.print(`   Dónde:  ${event.location}`);
+    if (event.attendees.length > 0) {
+      renderer.print(`   Con:    ${event.attendees.slice(0, 5).join(', ')}${event.attendees.length > 5 ? ` (+${event.attendees.length - 5} más)` : ''}`);
+    }
+    if (event.description) {
+      const short = event.description.length > 200 ? `${event.description.slice(0, 200)}…` : event.description;
+      renderer.print(`   ${short}`);
+    }
+  });
+}
+
+/**
+ * Formatea el momento de un evento en español: "todo el día", "hoy 10:00-11:30", etc.
+ *
+ * @param {import('../../modules/calendar/google-calendar-client.js').CalendarEvent} event
+ * @returns {string}
+ */
+function formatEventTime(event) {
+  if (event.allDay) {
+    return `${event.start} (todo el día)`;
+  }
+  try {
+    const start = new Date(event.start);
+    const end = event.end ? new Date(event.end) : null;
+    const dayFmt = new Intl.DateTimeFormat('es-ES', { weekday: 'short', day: '2-digit', month: 'short' });
+    const timeFmt = new Intl.DateTimeFormat('es-ES', { hour: '2-digit', minute: '2-digit' });
+    const dayPart = dayFmt.format(start);
+    const startTime = timeFmt.format(start);
+    const endTime = end ? timeFmt.format(end) : '';
+    return `${dayPart} ${startTime}${endTime ? `–${endTime}` : ''}`;
+  } catch {
+    return event.start;
+  }
+}
+
+/**
+ * Renders a list of email summaries in plain text. Used by both `luis mail today` and
+ * `luis mail from`. One block per email separated by blank lines.
+ *
+ * @param {import('./terminal-renderer.js').TerminalRenderer} renderer
+ * @param {import('../../modules/email/gmail-client.js').EmailSummary[]} emails
+ */
+function renderEmailList(renderer, emails) {
+  emails.forEach((email, i) => {
+    if (i > 0) renderer.print('');
+    renderer.print(`${i + 1}. ${email.subject || '(sin asunto)'}`);
+    renderer.print(`   De:    ${email.from || '(desconocido)'}`);
+    if (email.date) renderer.print(`   Fecha: ${email.date}`);
+    if (email.snippet) renderer.print(`   ${email.snippet}`);
+  });
 }
 
 /**

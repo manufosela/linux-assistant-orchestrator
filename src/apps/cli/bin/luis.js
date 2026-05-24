@@ -21,6 +21,8 @@ import { buildClusterTargets } from '../../../modules/cluster/cluster-targets.js
 import { createClusterHealthChecker } from '../../../modules/cluster/cluster-health-checker.js';
 import { createClusterHistoryStore } from '../../../modules/cluster/cluster-history-store.js';
 import { createClusterStatusService } from '../../../modules/cluster/cluster-status-service.js';
+import { createGmailClient } from '../../../modules/email/gmail-client.js';
+import { createGoogleCalendarClient } from '../../../modules/calendar/google-calendar-client.js';
 import { createCliApp } from '../create-cli-app.js';
 import { loadUserConfig } from '../user-config-loader.js';
 
@@ -134,12 +136,16 @@ async function main() {
   });
 
   let googleAuth;
+  let gmailClient;
+  let calendarClient;
   if (config.google.credentialsPath && config.google.tokensPath) {
     googleAuth = createGoogleAuth({
       credentialsPath: config.google.credentialsPath,
       tokensPath: config.google.tokensPath,
       logger,
     });
+    gmailClient = createGmailClient({ googleAuth, llmService, logger });
+    calendarClient = createGoogleCalendarClient({ googleAuth, logger });
   }
   const clusterStatus = createClusterStatusService({
     healthChecker: createClusterHealthChecker({ logger }),
@@ -158,6 +164,8 @@ async function main() {
     alexaAnnouncer,
     googleAuth,
     clusterStatus,
+    gmailClient,
+    calendarClient,
     logger,
     appName: APP_NAME,
     appVersion: pkg.version,

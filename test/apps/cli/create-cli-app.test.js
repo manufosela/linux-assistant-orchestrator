@@ -77,6 +77,10 @@ function makeApp(overrides = {}) {
     },
     urlFetcher: undefined,
     webSearch: undefined,
+    homeAssistant: undefined,
+    alexaAnnouncer: undefined,
+    googleAuth: undefined,
+    gmailClient: undefined,
     remoteCodeTasksEnabled: false,
   };
 
@@ -89,6 +93,10 @@ function makeApp(overrides = {}) {
     approvalService: services.approvalService,
     urlFetcher: services.urlFetcher,
     webSearch: services.webSearch,
+    homeAssistant: services.homeAssistant,
+    alexaAnnouncer: services.alexaAnnouncer,
+    googleAuth: services.googleAuth,
+    gmailClient: services.gmailClient,
     logger,
     appName: 'assistant',
     appVersion: 'test',
@@ -225,27 +233,94 @@ describe('create-cli-app — command routing', () => {
     assert.ok(renderer._output.some((line) => line.toLowerCase().includes('codex')), 'agent name should appear in output');
   });
 
-  it('"ai mail summary" returns the not-implemented placeholder', async () => {
+  it('"luis mail today" errors when gmailClient is not configured', async () => {
     const { app, renderer } = makeApp();
 
-    const exit = await app.runCommand(['mail', 'summary']);
+    const exit = await app.runCommand(['mail', 'today']);
 
-    assert.equal(exit, 0);
+    assert.equal(exit, 1);
     assert.ok(
-      renderer._output.some((line) => line.toLowerCase().includes('email integration is not implemented')),
-      'should render the placeholder message'
+      renderer._errors.some((line) => line.toLowerCase().includes('gmail no configurado')),
+      'should explain Gmail is not wired'
     );
   });
 
-  it('"ai calendar today" returns the not-implemented placeholder', async () => {
+  it('"luis mail today" lists emails when gmailClient is configured', async () => {
+    const emails = [
+      { id: 'm1', from: 'Alice', subject: 'Asunto 1', date: 'Mon', snippet: 'breve 1' },
+      { id: 'm2', from: 'Banco', subject: 'Cargo', date: 'Mon', snippet: 'breve 2' },
+    ];
+    const gmailClient = {
+      unreadToday: async () => emails,
+      fromSender: async () => [],
+      byKeyword: async () => [],
+      summarize: async () => null,
+    };
+    const { app, renderer } = makeApp({ gmailClient });
+
+    const exit = await app.runCommand(['mail', 'today']);
+
+    assert.equal(exit, 0);
+    const all = renderer._output.join('\n');
+    assert.match(all, /Asunto 1/);
+    assert.match(all, /Banco/);
+  });
+
+  it('"luis mail today" shows friendly message when there are no unread emails', async () => {
+    const gmailClient = {
+      unreadToday: async () => [],
+      fromSender: async () => [],
+      byKeyword: async () => [],
+      summarize: async () => null,
+    };
+    const { app, renderer } = makeApp({ gmailClient });
+
+    const exit = await app.runCommand(['mail', 'today']);
+
+    assert.equal(exit, 0);
+    assert.ok(renderer._output.some((line) => line.toLowerCase().includes('no tienes correos')));
+  });
+
+  it('"luis mail from" without sender shows usage', async () => {
+    const { app, renderer } = makeApp();
+
+    const exit = await app.runCommand(['mail', 'from']);
+
+    assert.equal(exit, 1);
+    assert.ok(renderer._errors.some((line) => line.toLowerCase().includes('uso: luis mail from')));
+  });
+
+  it('"luis mail from <sender>" passes the sender to gmailClient', async () => {
+    /** @type {Array<{ sender: string }>} */
+    const calls = [];
+    const gmailClient = {
+      unreadToday: async () => [],
+      async fromSender({ sender }) {
+        calls.push({ sender });
+        return [{ id: 'm1', from: 'X <x@y>', subject: 'Hi', date: 'Mon', snippet: 's' }];
+      },
+      byKeyword: async () => [],
+      summarize: async () => null,
+    };
+    const { app, renderer } = makeApp({ gmailClient });
+
+    const exit = await app.runCommand(['mail', 'from', 'banco']);
+
+    assert.equal(exit, 0);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].sender, 'banco');
+    assert.ok(renderer._output.some((line) => line.includes('Hi')));
+  });
+
+  it('"luis calendar today" without client shows configuration error', async () => {
     const { app, renderer } = makeApp();
 
     const exit = await app.runCommand(['calendar', 'today']);
 
-    assert.equal(exit, 0);
+    assert.equal(exit, 1);
     assert.ok(
-      renderer._output.some((line) => line.toLowerCase().includes('calendar integration is not implemented')),
-      'should render the placeholder message'
+      renderer._errors.some((line) => line.toLowerCase().includes('calendar no configurado')),
+      'should explain calendar is not wired'
     );
   });
 
