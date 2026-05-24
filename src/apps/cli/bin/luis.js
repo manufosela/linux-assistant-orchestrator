@@ -18,6 +18,7 @@ import { createSmartHomeAssistantClient } from '../../../modules/home-assistant/
 import { createAlexaAnnouncer } from '../../../modules/home-assistant/ha-alexa-announcer.js';
 import { createGoogleAuth } from '../../../modules/google/google-auth.js';
 import { createGmailClient } from '../../../modules/email/gmail-client.js';
+import { createGoogleCalendarClient } from '../../../modules/calendar/google-calendar-client.js';
 import { createCliApp } from '../create-cli-app.js';
 import { loadUserConfig } from '../user-config-loader.js';
 
@@ -132,6 +133,7 @@ async function main() {
 
   let googleAuth;
   let gmailClient;
+  let calendarClient;
   if (config.google.credentialsPath && config.google.tokensPath) {
     googleAuth = createGoogleAuth({
       credentialsPath: config.google.credentialsPath,
@@ -139,6 +141,7 @@ async function main() {
       logger,
     });
     gmailClient = createGmailClient({ googleAuth, llmService, logger });
+    calendarClient = createGoogleCalendarClient({ googleAuth, logger });
   }
 
   const app = createCliApp({
@@ -152,6 +155,7 @@ async function main() {
     alexaAnnouncer,
     googleAuth,
     gmailClient,
+    calendarClient,
     logger,
     appName: APP_NAME,
     appVersion: pkg.version,

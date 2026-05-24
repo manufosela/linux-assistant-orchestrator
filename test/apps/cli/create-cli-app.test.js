@@ -312,15 +312,15 @@ describe('create-cli-app — command routing', () => {
     assert.ok(renderer._output.some((line) => line.includes('Hi')));
   });
 
-  it('"ai calendar today" returns the not-implemented placeholder', async () => {
+  it('"luis calendar today" without client shows configuration error', async () => {
     const { app, renderer } = makeApp();
 
     const exit = await app.runCommand(['calendar', 'today']);
 
-    assert.equal(exit, 0);
+    assert.equal(exit, 1);
     assert.ok(
-      renderer._output.some((line) => line.toLowerCase().includes('calendar integration is not implemented')),
-      'should render the placeholder message'
+      renderer._errors.some((line) => line.toLowerCase().includes('calendar no configurado')),
+      'should explain calendar is not wired'
     );
   });
 
