@@ -34,6 +34,7 @@ import { createGoogleAuth } from './modules/google/google-auth.js';
 import { createGmailClient } from './modules/email/gmail-client.js';
 import { createGoogleCalendarClient } from './modules/calendar/google-calendar-client.js';
 import { createGoogleDriveClient } from './modules/drive/google-drive-client.js';
+import { createInboxStore } from './modules/inbox/inbox-store.js';
 
 const startTime = new Date();
 
@@ -201,6 +202,10 @@ async function main() {
     driveClient = createGoogleDriveClient({ googleAuth, logger });
   }
 
+  // Inbox store — Telegram inbound items (documents, photos, voice, audio, video)
+  // are persisted here for later routing.
+  const inboxStore = createInboxStore({ inboxPath: config.inbox.path, logger });
+
   // Telegram bot
   let bot = null;
   let telegramStop = async () => {};
@@ -231,6 +236,7 @@ async function main() {
       gmailClient,
       calendarClient,
       driveClient,
+      inboxStore,
       router,
       logger,
     });
