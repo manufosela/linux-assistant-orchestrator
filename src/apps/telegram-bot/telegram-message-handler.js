@@ -8,6 +8,7 @@ import { formatDownReport } from '../../modules/prometheus/prometheus-formatter.
 import { parseEmailIntent } from '../../modules/email/email-intent.js';
 import { parseCalendarIntent } from '../../modules/calendar/calendar-intent.js';
 import { parseDriveIntent } from '../../modules/drive/drive-intent.js';
+import { extractLeadingUrl, isUrl } from '../../modules/inbox/url-capture.js';
 import { rename } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
@@ -50,7 +51,7 @@ const INBOX_CATEGORY_EMOJI = {
   revisar: '🤔',
 };
 
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, calendarClient, driveClient, inboxStore, inboxProcessor, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -487,6 +488,24 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
   // ── Inbox: capturar adjuntos del bot (documentos, fotos, voz, audio, vídeo) ──
   // Telegram dispara estos eventos además de 'message'. El handler de 'message'
   // (en main.js → router.route) solo gestiona texto, así que no hay solapamiento.
+  router.register('/guarda', async (message) => {
+    const chatId = message.chat.id;
+    if (!urlCapture || !inboxStore) {
+      await bot.sendMessage(chatId, 'Inbox URL capture no está configurado.');
+      return;
+    }
+    const arg = extractArgs(message.text ?? '').trim();
+    if (!arg) {
+      await bot.sendMessage(chatId, 'Uso: <code>/guarda &lt;url&gt;</code>', { parse_mode: 'HTML' });
+      return;
+    }
+    if (!isUrl(arg)) {
+      await bot.sendMessage(chatId, `❌ No parece una URL válida: <code>${escapeHtml(arg)}</code>`, { parse_mode: 'HTML' });
+      return;
+    }
+    await captureUrlReply(arg, message);
+  });
+
   if (inboxStore) {
     bot.on('document', (msg) => handleInboxFile(msg, 'document'));
     bot.on('photo', (msg) => handleInboxFile(msg, 'photo'));
@@ -501,6 +520,41 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
    * @param {object} msg Telegram message
    * @param {'document'|'photo'|'voice'|'audio'|'video'} kind
    */
+  /**
+   * Capture a URL (from leading-URL detection or /guarda) and reply on Telegram.
+   *
+   * @param {string} url
+   * @param {object} msg Telegram message
+   */
+  async function captureUrlReply(url, msg) {
+    const chatId = msg.chat.id;
+    const indicator = await createThinkingIndicator(bot, chatId, {
+      text: '🌐 Descargando URL…',
+      logger,
+    });
+    try {
+      const result = await urlCapture.captureUrl(url, {
+        type: 'telegram',
+        chatId,
+        messageId: msg.message_id,
+        kind: 'url',
+      });
+      const titleSuffix = result.title ? `, "${result.title}"` : '';
+      await indicator.finish(
+        `📥 URL guardada: <code>${result.item.id.slice(0, 8)}</code>\n` +
+        `📚 <b>estudio</b> — ${result.words} palabras${titleSuffix}\n` +
+        `<i>${escapeHtml(result.finalUrl)}</i>`,
+        { parse_mode: 'HTML', disable_web_page_preview: true },
+      );
+    } catch (error) {
+      logger.warn({ chatId, url, err: error.message }, 'url capture failed');
+      await indicator.finish(
+        `❌ No pude capturar la URL: ${escapeHtml(error.message)}`,
+        { parse_mode: 'HTML' },
+      );
+    }
+  }
+
   async function handleInboxFile(msg, kind) {
     const chatId = msg.chat.id;
     let item;
@@ -567,6 +621,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '/correo [hoy|de &lt;persona&gt;] — correos no leídos de hoy o de un remitente',
       '/agenda [hoy|mañana|semana|próximo] — eventos del calendario',
       '/drive [buscar &lt;texto&gt;] — listar raíz o buscar en Drive (solo lectura)',
+      '/guarda &lt;url&gt; — capturar URL al inbox (también auto-detectado si el mensaje empieza por http(s)://)',
       '/reset — borrar la conversación',
       '/status — estado del asistente',
       '/llm_status — estado del LLM',
@@ -582,6 +637,18 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     const chatId = message.chat.id;
     const text = (message.text ?? '').trim();
     if (!text) return;
+
+    // Inbox URL capture (TSK-0052): if the message starts with http(s)://
+    // and the inbox + urlCapture are wired, treat it as "save this article"
+    // instead of chatting. Text in the middle of a chat ("mira esto: <url>")
+    // does NOT trigger capture — only when the URL is the first token.
+    if (urlCapture && inboxStore) {
+      const leadingUrl = extractLeadingUrl(text);
+      if (leadingUrl) {
+        await captureUrlReply(leadingUrl, message);
+        return;
+      }
+    }
 
     // Natural-language cluster queries ("estado del cluster", "status cluster")
     // are answered directly, without going through the LLM.
