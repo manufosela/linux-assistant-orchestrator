@@ -60,7 +60,41 @@ export function createInboxQuery({ inboxStore, logger }) {
     return filtered;
   }
 
-  return { query };
+  /**
+   * Finds a single item by id (full UUID or 8-char prefix).
+   *
+   * @param {string} id
+   * @returns {Promise<{ id: string, dir: string, meta: object } | null>}
+   */
+  async function findById(id) {
+    if (!id) return null;
+    const target = id.toLowerCase();
+    const items = await inboxStore.list();
+    return items.find((item) => item.id.toLowerCase().startsWith(target)) ?? null;
+  }
+
+  /**
+   * Finds the most-recent item that has an extracted.md (i.e. content that
+   * can be read or summarised). Optionally filtered by categories.
+   *
+   * @param {{ categories?: string[] | null }} [options]
+   * @returns {Promise<{ id: string, dir: string, meta: object } | null>}
+   */
+  async function findLatestWithExtraction({ categories = null } = {}) {
+    const items = await inboxStore.list();
+    const withExtraction = items.filter((item) => {
+      if (!item.meta.extraction?.path) return false;
+      if (categories && categories.length > 0) {
+        const cat = item.meta.classification?.category;
+        if (!cat || !categories.includes(cat)) return false;
+      }
+      return true;
+    });
+    withExtraction.sort((a, b) => parseDate(b.meta.receivedAt) - parseDate(a.meta.receivedAt));
+    return withExtraction[0] ?? null;
+  }
+
+  return { query, findById, findLatestWithExtraction };
 }
 
 async function loadPreview(item, maxChars) {

@@ -9,7 +9,7 @@ import { parseEmailIntent } from '../../modules/email/email-intent.js';
 import { parseCalendarIntent } from '../../modules/calendar/calendar-intent.js';
 import { parseDriveIntent } from '../../modules/drive/drive-intent.js';
 import { extractLeadingUrl, isUrl } from '../../modules/inbox/url-capture.js';
-import { parseInboxIntent } from '../../modules/inbox/inbox-intent.js';
+import { parseInboxIntent, parseInboxReadIntent } from '../../modules/inbox/inbox-intent.js';
 import { formatInboxResults } from '../../modules/inbox/inbox-formatter.js';
 import { rename } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -53,7 +53,7 @@ const INBOX_CATEGORY_EMOJI = {
   revisar: '🤔',
 };
 
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -490,6 +490,26 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
   // ── Inbox: capturar adjuntos del bot (documentos, fotos, voz, audio, vídeo) ──
   // Telegram dispara estos eventos además de 'message'. El handler de 'message'
   // (en main.js → router.route) solo gestiona texto, así que no hay solapamiento.
+  router.register('/abrir', async (message) => {
+    const chatId = message.chat.id;
+    if (!inboxReader) {
+      await bot.sendMessage(chatId, 'Inbox reader no está configurado.');
+      return;
+    }
+    const arg = extractArgs(message.text ?? '').trim();
+    await runInboxRead(chatId, { id: arg || null });
+  });
+
+  router.register('/resumir', async (message) => {
+    const chatId = message.chat.id;
+    if (!inboxReader) {
+      await bot.sendMessage(chatId, 'Inbox reader no está configurado.');
+      return;
+    }
+    const arg = extractArgs(message.text ?? '').trim();
+    await runInboxSummarise(chatId, { id: arg || null });
+  });
+
   router.register('/inbox', async (message) => {
     const chatId = message.chat.id;
     if (!inboxQuery) {
@@ -534,6 +554,107 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
    * @param {object} msg Telegram message
    * @param {'document'|'photo'|'voice'|'audio'|'video'} kind
    */
+  /**
+   * Reads an inbox item's extracted.md and sends it to Telegram in chunks.
+   *
+   * @param {number|string} chatId
+   * @param {{ id?: string|null, categories?: string[]|null }} options
+   */
+  async function runInboxRead(chatId, options) {
+    const indicator = await createThinkingIndicator(bot, chatId, {
+      text: '📖 Leyendo inbox…',
+      logger,
+    });
+    try {
+      const result = await inboxReader.read(options);
+      if (!result.text) {
+        await indicator.finish(noContentReply(result), { parse_mode: 'HTML' });
+        return;
+      }
+      // First message: header with item info; following messages: chunks of text.
+      const meta = result.item.meta;
+      const header = [
+        `📖 <b>${meta.classification?.category ?? 'sin clasificar'}</b> · <code>${result.item.id.slice(0, 8)}</code>`,
+        `<i>${escapeHtml(meta.textCaption ?? meta.fileName ?? '(sin título)')}</i>`,
+        '',
+      ].join('\n');
+      const chunks = chunkForTelegram(result.text);
+      await indicator.finish(`${header}<pre>${escapeHtml(chunks[0])}</pre>`, { parse_mode: 'HTML' });
+      for (let i = 1; i < chunks.length; i++) {
+        await bot.sendMessage(chatId,
+          `<i>(${i + 1}/${chunks.length})</i>\n<pre>${escapeHtml(chunks[i])}</pre>`,
+          { parse_mode: 'HTML' });
+      }
+    } catch (error) {
+      logger.warn({ chatId, err: error.message }, 'inbox read failed');
+      await indicator.finish(`❌ No pude leer el item: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+    }
+  }
+
+  /**
+   * Summarises an inbox item via the local LLM and sends the result.
+   *
+   * @param {number|string} chatId
+   * @param {{ id?: string|null, categories?: string[]|null }} options
+   */
+  async function runInboxSummarise(chatId, options) {
+    const indicator = await createThinkingIndicator(bot, chatId, {
+      text: '🧠 Resumiendo…',
+      logger,
+    });
+    try {
+      const result = await inboxReader.summarise(options);
+      if (!result.summary) {
+        await indicator.finish(noContentReply(result), { parse_mode: 'HTML' });
+        return;
+      }
+      const meta = result.item.meta;
+      const header = [
+        `🧠 <b>Resumen</b> · ${meta.classification?.category ?? 'item'} · <code>${result.item.id.slice(0, 8)}</code>`,
+        `<i>${escapeHtml(meta.textCaption ?? meta.fileName ?? meta.extraction?.title ?? '(sin título)')}</i>`,
+        '',
+        escapeHtml(result.summary),
+      ].join('\n');
+      await indicator.finish(header, { parse_mode: 'HTML', disable_web_page_preview: true });
+    } catch (error) {
+      logger.warn({ chatId, err: error.message }, 'inbox summarise failed');
+      await indicator.finish(`❌ No pude resumir: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+    }
+  }
+
+  function noContentReply(result) {
+    if (result.reason === 'no-item') return '📭 No encontré el item.';
+    if (result.reason === 'no-extraction') return '📭 Ese item no tiene contenido extraído (foto sin OCR, voz sin transcribir, etc.).';
+    if (result.reason?.startsWith('llm-failed')) return `❌ El LLM falló: ${escapeHtml(result.reason)}`;
+    if (result.reason?.startsWith('read-failed')) return `❌ No pude leer el fichero: ${escapeHtml(result.reason)}`;
+    return '📭 No hay items con contenido extraído todavía.';
+  }
+
+  /**
+   * Splits text into chunks that fit Telegram's 4096-char message limit,
+   * preferring paragraph/sentence boundaries.
+   *
+   * @param {string} text
+   * @param {number} maxChars
+   * @returns {string[]}
+   */
+  function chunkForTelegram(text, maxChars = 3500) {
+    if (!text) return [''];
+    if (text.length <= maxChars) return [text];
+    const chunks = [];
+    let remaining = text;
+    while (remaining.length > maxChars) {
+      let breakAt = remaining.lastIndexOf('\n\n', maxChars);
+      if (breakAt < maxChars / 2) breakAt = remaining.lastIndexOf('\n', maxChars);
+      if (breakAt < maxChars / 2) breakAt = remaining.lastIndexOf('. ', maxChars);
+      if (breakAt < maxChars / 2) breakAt = maxChars;
+      chunks.push(remaining.slice(0, breakAt));
+      remaining = remaining.slice(breakAt).trimStart();
+    }
+    if (remaining) chunks.push(remaining);
+    return chunks;
+  }
+
   /**
    * Runs an inbox query intent and replies with the formatted result.
    *
@@ -665,6 +786,8 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '/drive [buscar &lt;texto&gt;] — listar raíz o buscar en Drive (solo lectura)',
       '/guarda &lt;url&gt; — capturar URL al inbox (también auto-detectado si el mensaje empieza por http(s)://)',
       '/inbox [hoy|semana|mes|todo] — listar lo guardado (\"qué guardaste hoy?\", \"mis notas\", \"mis estudios de la semana\"…)',
+      '/abrir [id] — leer el texto extraído de un item (sin id: el más reciente). NL: \"lee el último\"',
+      '/resumir [id] — resumen LLM del item (sin id: el más reciente). NL: \"resume el último estudio\"',
       '/reset — borrar la conversación',
       '/status — estado del asistente',
       '/llm_status — estado del LLM',
@@ -689,6 +812,21 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       const leadingUrl = extractLeadingUrl(text);
       if (leadingUrl) {
         await captureUrlReply(leadingUrl, message);
+        return;
+      }
+    }
+
+    // Inbox read/summarise (TSK-0054): "lee el último", "resume el último estudio".
+    // Comes first to win over the more general inbox-query patterns.
+    if (inboxReader) {
+      const readIntent = parseInboxReadIntent(text);
+      if (readIntent) {
+        const opts = { id: readIntent.id, categories: readIntent.categories };
+        if (readIntent.kind === 'inbox-summarise') {
+          await runInboxSummarise(chatId, opts);
+        } else {
+          await runInboxRead(chatId, opts);
+        }
         return;
       }
     }

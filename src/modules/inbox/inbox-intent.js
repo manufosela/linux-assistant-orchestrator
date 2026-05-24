@@ -111,6 +111,49 @@ function startOfDay(date) {
 }
 
 /**
+ * Detects "read" and "summarise" requests for a specific inbox item.
+ *
+ * Returns:
+ *   { kind: 'inbox-read' | 'inbox-summarise', id: string | null, categories: string[] | null }
+ * or null if the text isn't a read/summarise request.
+ *
+ * Examples that match:
+ *   /abrir
+ *   /abrir a1b2c3d4
+ *   /resumir
+ *   lee el último
+ *   abre el último artículo
+ *   resume el último estudio
+ *   resúmeme lo último
+ *   qué dice el último documento
+ *
+ * @param {string} text
+ * @returns {{kind: string, id: string|null, categories: string[]|null} | null}
+ */
+export function parseInboxReadIntent(text) {
+  if (typeof text !== 'string') return null;
+  const t = stripAccents(text.toLowerCase().trim());
+  if (!t) return null;
+
+  const summarisePattern = /\b(resume(me)?|resumir|que\s+dice|de\s+que\s+(va|trata))\b/;
+  const readPattern = /\b(lee(me)?|leer|abre|abrir|muestrame\s+(el\s+)?texto)\b/;
+
+  let kind = null;
+  if (summarisePattern.test(t)) kind = 'inbox-summarise';
+  else if (readPattern.test(t)) kind = 'inbox-read';
+
+  if (!kind) return null;
+
+  // Try to extract a hex ID (full UUID or short prefix of 6+ chars)
+  const idMatch = t.match(/\b([0-9a-f]{6,})\b/);
+  const id = idMatch ? idMatch[1] : null;
+
+  const categories = parseCategories(t);
+
+  return { kind, id, categories };
+}
+
+/**
  * Removes diacritics so the matcher works on "ítem" / "cómo" / "qué" etc.
  *
  * @param {string} s
