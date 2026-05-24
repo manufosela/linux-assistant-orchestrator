@@ -8,6 +8,8 @@ import { formatDownReport } from '../../modules/prometheus/prometheus-formatter.
 import { parseEmailIntent } from '../../modules/email/email-intent.js';
 import { parseCalendarIntent } from '../../modules/calendar/calendar-intent.js';
 import { parseDriveIntent } from '../../modules/drive/drive-intent.js';
+import { rename } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 const ANNOUNCE_PENDING_TTL_MS = 5 * 60 * 1000;
 const ANNOUNCE_CALLBACK_PREFIX = 'anuncia:';
@@ -37,7 +39,7 @@ const SYSTEM_PROMPT =
  * @param {import('pino').Logger} deps.logger
  * @returns {void}
  */
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, calendarClient, driveClient, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, calendarClient, driveClient, inboxStore, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -471,6 +473,51 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     }
   });
 
+  // ── Inbox: capturar adjuntos del bot (documentos, fotos, voz, audio, vídeo) ──
+  // Telegram dispara estos eventos además de 'message'. El handler de 'message'
+  // (en main.js → router.route) solo gestiona texto, así que no hay solapamiento.
+  if (inboxStore) {
+    bot.on('document', (msg) => handleInboxFile(msg, 'document'));
+    bot.on('photo', (msg) => handleInboxFile(msg, 'photo'));
+    bot.on('voice', (msg) => handleInboxFile(msg, 'voice'));
+    bot.on('audio', (msg) => handleInboxFile(msg, 'audio'));
+    bot.on('video', (msg) => handleInboxFile(msg, 'video'));
+  }
+
+  /**
+   * Descarga un adjunto y lo persiste en el inbox.
+   *
+   * @param {object} msg Telegram message
+   * @param {'document'|'photo'|'voice'|'audio'|'video'} kind
+   */
+  async function handleInboxFile(msg, kind) {
+    const chatId = msg.chat.id;
+    try {
+      const { fileId, fileName, mimeType } = extractAttachment(msg, kind);
+      if (!fileId) return;
+      const item = await inboxStore.add({
+        origin: { type: 'telegram', chatId, messageId: msg.message_id, kind },
+        mimeType,
+        fileName,
+        textCaption: msg.caption ?? null,
+        downloadFileTo: async (target) => {
+          // node-telegram-bot-api guarda con el nombre que Telegram devuelve.
+          // Lo descargamos al dir destino y lo renombramos al filename final.
+          const tgPath = await bot.downloadFile(fileId, dirname(target));
+          if (tgPath !== target) await rename(tgPath, target);
+        },
+      });
+      const summary = msg.caption ? ` ("${msg.caption.slice(0, 60)}")` : '';
+      await bot.sendMessage(chatId,
+        `📥 Guardado en inbox: <code>${item.id.slice(0, 8)}</code>${summary}\n` +
+        `<i>${kind} · ${mimeType ?? 'desconocido'}</i>`,
+        { parse_mode: 'HTML' });
+    } catch (error) {
+      logger.warn({ chatId, kind, err: error.message }, 'inbox capture failed');
+      await bot.sendMessage(chatId, `❌ No pude guardar en inbox: ${error.message}`);
+    }
+  }
+
   router.register('/help', async (message) => {
     const chatId = message.chat.id;
     const text = [
@@ -794,6 +841,54 @@ async function runDriveCommand(args, client) {
   });
   const more = items.length > 20 ? `\n\n<i>(…+${items.length - 20} más, refina la búsqueda)</i>` : '';
   return `${heading}\n\n${lines.join('\n')}${more}`;
+}
+
+/**
+ * Extracts the relevant file metadata from a Telegram message based on its kind.
+ *
+ * @param {object} msg Telegram message
+ * @param {'document'|'photo'|'voice'|'audio'|'video'} kind
+ * @returns {{ fileId: string|null, fileName: string|null, mimeType: string|null }}
+ */
+function extractAttachment(msg, kind) {
+  if (kind === 'document' && msg.document) {
+    return {
+      fileId: msg.document.file_id,
+      fileName: msg.document.file_name ?? null,
+      mimeType: msg.document.mime_type ?? null,
+    };
+  }
+  if (kind === 'photo' && Array.isArray(msg.photo) && msg.photo.length > 0) {
+    // Telegram envía varias resoluciones; la última es la mayor.
+    const largest = msg.photo[msg.photo.length - 1];
+    return {
+      fileId: largest.file_id,
+      fileName: `${largest.file_unique_id || largest.file_id}.jpg`,
+      mimeType: 'image/jpeg',
+    };
+  }
+  if (kind === 'voice' && msg.voice) {
+    return {
+      fileId: msg.voice.file_id,
+      fileName: `${msg.voice.file_unique_id || msg.voice.file_id}.ogg`,
+      mimeType: msg.voice.mime_type ?? 'audio/ogg',
+    };
+  }
+  if (kind === 'audio' && msg.audio) {
+    return {
+      fileId: msg.audio.file_id,
+      fileName: msg.audio.file_name ?? `${msg.audio.file_unique_id || msg.audio.file_id}.mp3`,
+      mimeType: msg.audio.mime_type ?? 'audio/mpeg',
+    };
+  }
+  if (kind === 'video' && msg.video) {
+    return {
+      fileId: msg.video.file_id,
+      fileName: msg.video.file_name ?? `${msg.video.file_unique_id || msg.video.file_id}.mp4`,
+      mimeType: msg.video.mime_type ?? 'video/mp4',
+    };
+  }
+  return { fileId: null, fileName: null, mimeType: null };
 }
 
 /**

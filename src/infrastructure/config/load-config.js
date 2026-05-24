@@ -97,6 +97,10 @@ export function loadConfig(envPath = '.env') {
       enableLlmClassification: process.env.ENABLE_LLM_FILE_CLASSIFICATION === 'true',
     },
 
+    inbox: {
+      path: process.env.INBOX_PATH ?? '/data/inbox',
+    },
+
     llm: {
       provider: process.env.LLM_PROVIDER ?? 'local',
       allowCloudLlm: process.env.ALLOW_CLOUD_LLM === 'true',
@@ -204,6 +208,7 @@ function validateConfig(config) {
  * @property {{ enabled: boolean, n2Ip: string, n3Ip: string, n4Ip: string, historyPath: string }} cluster
  * @property {{ enabled: boolean, baseUrl: string, timeoutMs: number }} prometheus
  * @property {{ watchPath: string, rulesPath: string, enableLlmClassification: boolean }} downloads
+ * @property {{ path: string }} inbox
  * @property {import('../../types/llm.js').LlmConfig} llm
  * @property {{ provider: string, readOnly: boolean }} email
  * @property {{ provider: string, readOnly: boolean }} calendar
