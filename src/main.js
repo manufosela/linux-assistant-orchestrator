@@ -33,6 +33,7 @@ import { createPrometheusClient } from './modules/prometheus/prometheus-client.j
 import { createGoogleAuth } from './modules/google/google-auth.js';
 import { createGmailClient } from './modules/email/gmail-client.js';
 import { createGoogleCalendarClient } from './modules/calendar/google-calendar-client.js';
+import { createGoogleDriveClient } from './modules/drive/google-drive-client.js';
 
 const startTime = new Date();
 
@@ -188,6 +189,7 @@ async function main() {
   let googleAuth;
   let gmailClient;
   let calendarClient;
+  let driveClient;
   if (config.google.credentialsPath && config.google.tokensPath) {
     googleAuth = createGoogleAuth({
       credentialsPath: config.google.credentialsPath,
@@ -196,6 +198,7 @@ async function main() {
     });
     gmailClient = createGmailClient({ googleAuth, llmService, logger });
     calendarClient = createGoogleCalendarClient({ googleAuth, logger });
+    driveClient = createGoogleDriveClient({ googleAuth, logger });
   }
 
   // Telegram bot
@@ -227,6 +230,7 @@ async function main() {
       prometheusClient,
       gmailClient,
       calendarClient,
+      driveClient,
       router,
       logger,
     });

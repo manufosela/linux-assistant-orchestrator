@@ -7,6 +7,7 @@ import { parsePrometheusIntent } from '../../modules/prometheus/prometheus-inten
 import { formatDownReport } from '../../modules/prometheus/prometheus-formatter.js';
 import { parseEmailIntent } from '../../modules/email/email-intent.js';
 import { parseCalendarIntent } from '../../modules/calendar/calendar-intent.js';
+import { parseDriveIntent } from '../../modules/drive/drive-intent.js';
 
 const ANNOUNCE_PENDING_TTL_MS = 5 * 60 * 1000;
 const ANNOUNCE_CALLBACK_PREFIX = 'anuncia:';
@@ -36,7 +37,7 @@ const SYSTEM_PROMPT =
  * @param {import('pino').Logger} deps.logger
  * @returns {void}
  */
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, calendarClient, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, calendarClient, driveClient, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -453,6 +454,23 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     }
   });
 
+  router.register('/drive', async (message) => {
+    const chatId = message.chat.id;
+    if (!driveClient) {
+      await bot.sendMessage(chatId, 'Drive no configurado. Hay que ejecutar `luis google login` primero.');
+      return;
+    }
+    const args = extractArgs(message.text ?? '').trim();
+    const indicator = await createThinkingIndicator(bot, chatId, { text: '🗂️ Consultando Drive…', logger });
+    try {
+      const reply = await runDriveCommand(args, driveClient);
+      await indicator.finish(reply, { parse_mode: 'HTML', disable_web_page_preview: true });
+    } catch (error) {
+      logger.warn({ chatId, err: error.message }, '/drive failed');
+      await indicator.finish(`❌ No pude consultar Drive: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+    }
+  });
+
   router.register('/help', async (message) => {
     const chatId = message.chat.id;
     const text = [
@@ -469,6 +487,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '/anuncia &lt;destino&gt; &lt;texto&gt; — anuncio en Alexa (o sin destino para elegir)',
       '/correo [hoy|de &lt;persona&gt;] — correos no leídos de hoy o de un remitente',
       '/agenda [hoy|mañana|semana|próximo] — eventos del calendario',
+      '/drive [buscar &lt;texto&gt;] — listar raíz o buscar en Drive (solo lectura)',
       '/reset — borrar la conversación',
       '/status — estado del asistente',
       '/llm_status — estado del LLM',
@@ -547,6 +566,24 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
         } catch (error) {
           logger.warn({ chatId, err: error.message }, 'calendar intent fallback failed');
           await indicator.finish(`❌ No pude consultar la agenda: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+        }
+        return;
+      }
+    }
+
+    // Natural-language Drive queries ("busca facturas en drive", "qué hay en mi drive")
+    // are answered from Google Drive without going through the LLM.
+    if (driveClient) {
+      const driveIntent = parseDriveIntent(text);
+      if (driveIntent) {
+        const indicator = await createThinkingIndicator(bot, chatId, { text: '🗂️ Consultando Drive…', logger });
+        try {
+          const args = driveIntent.kind === 'search' ? `buscar ${driveIntent.query}` : '';
+          const reply = await runDriveCommand(args, driveClient);
+          await indicator.finish(reply, { parse_mode: 'HTML', disable_web_page_preview: true });
+        } catch (error) {
+          logger.warn({ chatId, err: error.message }, 'drive intent fallback failed');
+          await indicator.finish(`❌ No pude consultar Drive: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
         }
         return;
       }
@@ -718,6 +755,45 @@ function formatEventTimeShort(event) {
   } catch {
     return event.start;
   }
+}
+
+/**
+ * Routes the argument string of `/drive` to the right Drive call.
+ * Supports: empty/no args → list root; "buscar X" → search by name.
+ *
+ * @param {string} args
+ * @param {import('../../modules/drive/google-drive-client.js').GoogleDriveClient} client
+ * @returns {Promise<string>}
+ */
+async function runDriveCommand(args, client) {
+  const trimmed = (args ?? '').trim();
+  const searchMatch = trimmed.match(/^(?:buscar|search)\s+(.+)$/i);
+  let items;
+  let heading;
+  if (searchMatch) {
+    const query = searchMatch[1].trim();
+    items = await client.searchByName(query);
+    if (items.length === 0) return `🗂️ Sin resultados en Drive para "<i>${escapeHtml(query)}</i>".`;
+    heading = `🗂️ <b>${items.length} resultado${items.length === 1 ? '' : 's'} para "${escapeHtml(query)}":</b>`;
+  } else if (!trimmed || /^(?:listar|list|raiz|root)$/i.test(trimmed)) {
+    items = await client.listFolder();
+    if (items.length === 0) return '🗂️ Tu Drive raíz está vacío.';
+    heading = `🗂️ <b>${items.length} elemento${items.length === 1 ? '' : 's'} en la raíz de tu Drive:</b>`;
+  } else {
+    // Fallback: tratarlo como folder ID literal
+    items = await client.listFolder(trimmed);
+    if (items.length === 0) return `🗂️ (carpeta <code>${escapeHtml(trimmed)}</code> vacía)`;
+    heading = `🗂️ <b>${items.length} elemento${items.length === 1 ? '' : 's'} en la carpeta:</b>`;
+  }
+  const lines = items.slice(0, 20).map((it) => {
+    const icon = it.isFolder ? '📁' : '📄';
+    const name = escapeHtml(it.name);
+    return it.webViewLink
+      ? `${icon} <a href="${it.webViewLink}">${name}</a>`
+      : `${icon} ${name}`;
+  });
+  const more = items.length > 20 ? `\n\n<i>(…+${items.length - 20} más, refina la búsqueda)</i>` : '';
+  return `${heading}\n\n${lines.join('\n')}${more}`;
 }
 
 /**
