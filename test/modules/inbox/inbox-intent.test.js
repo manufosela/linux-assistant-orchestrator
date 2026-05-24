@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseInboxIntent } from '../../../src/modules/inbox/inbox-intent.js';
+import { parseInboxIntent, parseInboxReadIntent } from '../../../src/modules/inbox/inbox-intent.js';
 
 const NOW = new Date('2026-05-24T15:00:00Z');
 const now = () => NOW;
@@ -84,6 +84,45 @@ describe('inbox-intent time ranges', () => {
   it('sin modifier → últimos 7 días (default)', () => {
     const intent = parseInboxIntent('qué guardaste', { now });
     assert.equal(intent.label, 'últimos 7 días');
+  });
+});
+
+describe('parseInboxReadIntent', () => {
+  it('"lee el último" → inbox-read sin id', () => {
+    const intent = parseInboxReadIntent('lee el último');
+    assert.equal(intent.kind, 'inbox-read');
+    assert.equal(intent.id, null);
+  });
+
+  it('"abre <id>" → inbox-read con id', () => {
+    const intent = parseInboxReadIntent('abre a1b2c3d4');
+    assert.equal(intent.kind, 'inbox-read');
+    assert.equal(intent.id, 'a1b2c3d4');
+  });
+
+  it('"resume el último estudio" → inbox-summarise con categoría', () => {
+    const intent = parseInboxReadIntent('resume el último estudio');
+    assert.equal(intent.kind, 'inbox-summarise');
+    assert.deepEqual(intent.categories, ['estudio']);
+  });
+
+  it('"resúmeme lo último" → inbox-summarise', () => {
+    const intent = parseInboxReadIntent('resúmeme lo último');
+    assert.equal(intent.kind, 'inbox-summarise');
+  });
+
+  it('"qué dice el último documento" → inbox-summarise + documento', () => {
+    const intent = parseInboxReadIntent('qué dice el último documento');
+    assert.equal(intent.kind, 'inbox-summarise');
+    assert.deepEqual(intent.categories, ['documento']);
+  });
+
+  it('"hola" → null', () => {
+    assert.equal(parseInboxReadIntent('hola'), null);
+  });
+
+  it('"qué guardaste hoy" → null (es inbox-query, no read)', () => {
+    assert.equal(parseInboxReadIntent('qué guardaste hoy'), null);
   });
 });
 
