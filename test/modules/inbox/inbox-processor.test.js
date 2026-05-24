@@ -122,7 +122,8 @@ describe('inbox-processor — descartar', () => {
 });
 
 describe('inbox-processor — categorías pendientes de cards posteriores', () => {
-  for (const category of ['voz', 'foto', 'revisar']) {
+  // 'foto' moved to its own suite (OCR flow, TSK-0053).
+  for (const category of ['voz', 'revisar']) {
     it(`${category} → no markRouted, no fichero, solo annotation`, async () => {
       const item = makeItem();
       await seedMeta(item);
@@ -255,6 +256,126 @@ describe('inbox-processor — documento/estudio (Markitdown)', () => {
     assert.equal(store.calls.markError.length, 0); // sin markError, solo log
     assert.equal(store.calls.markRouted.length, 0);
     assert.match(result.action.message, /sidecar 500/);
+  });
+});
+
+describe('inbox-processor — foto con OCR (TSK-0053)', () => {
+  function fakeOcr({ text = '', title = null } = {}) {
+    return { convertFile: async () => ({ text, title, filename: 'photo.jpg' }) };
+  }
+
+  it('foto sin markitdownClient → pending sin OCR (comportamiento previo)', async () => {
+    const item = makeItem({ kind: 'photo', fileName: 'photo.jpg' });
+    await seedMeta(item);
+    const router = fakeRouter({ category: 'foto', confidence: 1, reasoning: 'hard-rule' });
+    const proc = createInboxProcessor({
+      router, inboxStore: fakeInboxStore(), notesPath: notesDir,
+      now: () => fixedDate,
+    });
+
+    const result = await proc.processItem(item);
+
+    assert.equal(result.action.kind, 'pending-foto');
+    await assert.rejects(() => stat(join(item.dir, 'extracted.md')));
+  });
+
+  it('foto + OCR >50 palabras → reclasifica a documento, escribe extracted.md', async () => {
+    const item = makeItem({ kind: 'photo', fileName: 'screenshot.jpg' });
+    await seedMeta(item);
+    await writeFile(join(item.dir, 'screenshot.jpg'), 'JPG BYTES');
+    const longText = Array.from({ length: 80 }, (_, i) => `palabra${i}`).join(' ');
+    const router = fakeRouter({ category: 'foto', confidence: 1, reasoning: 'hard-rule' });
+    const proc = createInboxProcessor({
+      router, inboxStore: fakeInboxStore(), notesPath: notesDir,
+      markitdownClient: fakeOcr({ text: longText, title: 'Article Title' }),
+      now: () => fixedDate,
+    });
+
+    const result = await proc.processItem(item);
+
+    assert.equal(result.action.kind, 'extracted-foto-as-documento');
+    const meta = JSON.parse(await readFile(join(item.dir, 'meta.json'), 'utf8'));
+    assert.equal(meta.classification.category, 'documento');
+    assert.equal(meta.classification.overriddenFrom, 'foto');
+    assert.match(meta.classification.reasoning, /OCR detectó 80 palabras/);
+    assert.equal(meta.extraction.source, 'ocr');
+    assert.equal(meta.extraction.words, 80);
+    const extracted = await readFile(join(item.dir, 'extracted.md'), 'utf8');
+    assert.match(extracted, /palabra0 palabra1/);
+  });
+
+  it('foto + OCR <50 palabras → se queda como foto, sin extracted.md', async () => {
+    const item = makeItem({ kind: 'photo', fileName: 'photo.jpg' });
+    await seedMeta(item);
+    await writeFile(join(item.dir, 'photo.jpg'), 'JPG');
+    const router = fakeRouter({ category: 'foto', confidence: 1, reasoning: 'hard-rule' });
+    const proc = createInboxProcessor({
+      router, inboxStore: fakeInboxStore(), notesPath: notesDir,
+      markitdownClient: fakeOcr({ text: 'tres palabras solo' }),
+      now: () => fixedDate,
+    });
+
+    const result = await proc.processItem(item);
+
+    assert.equal(result.action.kind, 'pending-foto');
+    assert.match(result.action.message, /solo 3 palabras/);
+    const meta = JSON.parse(await readFile(join(item.dir, 'meta.json'), 'utf8'));
+    assert.equal(meta.classification.category, 'foto');
+    assert.equal(meta.extraction.source, 'ocr-no-text');
+    assert.equal(meta.extraction.path, null);
+    await assert.rejects(() => stat(join(item.dir, 'extracted.md')));
+  });
+
+  it('foto + OCR sin texto → "sin texto OCR"', async () => {
+    const item = makeItem({ kind: 'photo', fileName: 'sunset.jpg' });
+    await seedMeta(item);
+    await writeFile(join(item.dir, 'sunset.jpg'), 'JPG');
+    const router = fakeRouter({ category: 'foto', confidence: 1, reasoning: 'hard-rule' });
+    const proc = createInboxProcessor({
+      router, inboxStore: fakeInboxStore(), notesPath: notesDir,
+      markitdownClient: fakeOcr({ text: '' }),
+      now: () => fixedDate,
+    });
+
+    const result = await proc.processItem(item);
+
+    assert.match(result.action.message, /sin texto OCR/);
+  });
+
+  it('foto + markitdown lanza → graceful fallback (pending-foto, sin error)', async () => {
+    const item = makeItem({ kind: 'photo', fileName: 'foto.jpg' });
+    await seedMeta(item);
+    await writeFile(join(item.dir, 'foto.jpg'), 'JPG');
+    const md = { convertFile: async () => { throw new Error('tesseract crashed'); } };
+    const store = fakeInboxStore();
+    const proc = createInboxProcessor({
+      router: fakeRouter({ category: 'foto', confidence: 1, reasoning: 'r' }),
+      inboxStore: store, notesPath: notesDir,
+      markitdownClient: md, now: () => fixedDate,
+    });
+
+    const result = await proc.processItem(item);
+
+    assert.equal(result.action.kind, 'pending-foto');
+    assert.equal(store.calls.markError.length, 0);
+    assert.match(result.action.message, /tesseract crashed/);
+  });
+
+  it('foto sin fileName → pending sin tocar markitdown', async () => {
+    const item = makeItem({ kind: 'photo', fileName: null });
+    await seedMeta(item);
+    let called = false;
+    const md = { convertFile: async () => { called = true; return { text: 'x' }; } };
+    const proc = createInboxProcessor({
+      router: fakeRouter({ category: 'foto', confidence: 1, reasoning: 'r' }),
+      inboxStore: fakeInboxStore(), notesPath: notesDir,
+      markitdownClient: md, now: () => fixedDate,
+    });
+
+    const result = await proc.processItem(item);
+
+    assert.equal(result.action.kind, 'pending-foto');
+    assert.equal(called, false);
   });
 });
 
