@@ -39,6 +39,7 @@ import { createInboxRouter } from './modules/inbox/inbox-router.js';
 import { createInboxProcessor } from './modules/inbox/inbox-processor.js';
 import { createMarkitdownClient } from './modules/inbox/markitdown-client.js';
 import { createUrlCapture } from './modules/inbox/url-capture.js';
+import { createInboxQuery } from './modules/inbox/inbox-query.js';
 
 const startTime = new Date();
 
@@ -233,6 +234,7 @@ async function main() {
   // URL capture has its own flow: urlFetcher already extracts text + title,
   // so we skip the router/markitdown and store the result directly.
   const urlCapture = createUrlCapture({ urlFetcher, inboxStore, logger });
+  const inboxQuery = createInboxQuery({ inboxStore, logger });
 
   // Telegram bot
   let bot = null;
@@ -267,6 +269,7 @@ async function main() {
       inboxStore,
       inboxProcessor,
       urlCapture,
+      inboxQuery,
       router,
       logger,
     });
