@@ -104,6 +104,10 @@ export function loadConfig(envPath = '.env') {
       // stay pending without text extraction (graceful fallback).
       markitdownUrl: process.env.MARKITDOWN_URL ?? '',
       markitdownTimeoutMs: Number(process.env.MARKITDOWN_TIMEOUT_MS ?? 60000),
+      // Model override for /resumir. The default LLM model ("fast") returns
+      // empty content on the local cluster — override with a model that works
+      // for Spanish prose summarisation. Empty string = use the default.
+      summariseModel: process.env.INBOX_SUMMARISE_MODEL ?? 'coder',
     },
 
     llm: {
@@ -213,7 +217,7 @@ function validateConfig(config) {
  * @property {{ enabled: boolean, n2Ip: string, n3Ip: string, n4Ip: string, historyPath: string }} cluster
  * @property {{ enabled: boolean, baseUrl: string, timeoutMs: number }} prometheus
  * @property {{ watchPath: string, rulesPath: string, enableLlmClassification: boolean }} downloads
- * @property {{ path: string, notesPath: string, markitdownUrl: string, markitdownTimeoutMs: number }} inbox
+ * @property {{ path: string, notesPath: string, markitdownUrl: string, markitdownTimeoutMs: number, summariseModel: string }} inbox
  * @property {import('../../types/llm.js').LlmConfig} llm
  * @property {{ provider: string, readOnly: boolean }} email
  * @property {{ provider: string, readOnly: boolean }} calendar
