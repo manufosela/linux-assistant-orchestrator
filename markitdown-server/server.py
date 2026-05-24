@@ -17,12 +17,20 @@ import traceback
 
 from flask import Flask, jsonify, request
 from markitdown import MarkItDown
+from PIL import Image
+import pytesseract
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("markitdown-server")
 
 app = Flask(__name__)
 md = MarkItDown()
+
+# Images: markitdown 0.0.1a3 requires a vision LLM to OCR images (no local
+# tesseract integration). We have tesseract installed for spa+eng, so for
+# images we bypass markitdown and call tesseract directly via pytesseract.
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff", ".tif"}
+OCR_LANGS = "spa+eng"
 
 
 @app.get("/health")
@@ -39,7 +47,7 @@ def convert():
     if not f.filename:
         return jsonify({"error": "uploaded file has no name"}), 400
 
-    suffix = os.path.splitext(f.filename)[1]
+    suffix = os.path.splitext(f.filename)[1].lower()
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -47,11 +55,29 @@ def convert():
             tmp_path = tmp.name
 
         log.info("converting %s (%s)", f.filename, suffix)
+
+        if suffix in IMAGE_EXTS:
+            # Direct tesseract OCR — markitdown's image handling needs a vision LLM.
+            try:
+                with Image.open(tmp_path) as img:
+                    text = pytesseract.image_to_string(img, lang=OCR_LANGS)
+            except pytesseract.TesseractError as exc:
+                log.warning("tesseract failed on %s: %s", f.filename, exc)
+                text = ""
+            return jsonify({
+                "text": text or "",
+                "title": None,
+                "filename": f.filename,
+                "engine": "pytesseract",
+            })
+
+        # All other formats: markitdown
         result = md.convert(tmp_path)
         return jsonify({
             "text": result.text_content or "",
             "title": getattr(result, "title", None),
             "filename": f.filename,
+            "engine": "markitdown",
         })
     except Exception as exc:  # noqa: BLE001 - we want to report any failure
         log.error("conversion failed for %s: %s\n%s", f.filename, exc, traceback.format_exc())
