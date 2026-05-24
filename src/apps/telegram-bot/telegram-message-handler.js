@@ -39,7 +39,18 @@ const SYSTEM_PROMPT =
  * @param {import('pino').Logger} deps.logger
  * @returns {void}
  */
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, calendarClient, driveClient, inboxStore, router, logger }) {
+const INBOX_CATEGORY_EMOJI = {
+  idea: '💡',
+  tarea: '✅',
+  documento: '📄',
+  estudio: '📚',
+  foto: '🖼️',
+  voz: '🎙️',
+  descartar: '🗑️',
+  revisar: '🤔',
+};
+
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, calendarClient, driveClient, inboxStore, inboxProcessor, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -492,10 +503,11 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
    */
   async function handleInboxFile(msg, kind) {
     const chatId = msg.chat.id;
+    let item;
     try {
       const { fileId, fileName, mimeType } = extractAttachment(msg, kind);
       if (!fileId) return;
-      const item = await inboxStore.add({
+      item = await inboxStore.add({
         origin: { type: 'telegram', chatId, messageId: msg.message_id, kind },
         mimeType,
         fileName,
@@ -515,6 +527,26 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     } catch (error) {
       logger.warn({ chatId, kind, err: error.message }, 'inbox capture failed');
       await bot.sendMessage(chatId, `❌ No pude guardar en inbox: ${error.message}`);
+      return;
+    }
+
+    // Classify + dispatch. The processor never throws (errors are surfaced as
+    // markError in the store), so failures here are only network/parse issues
+    // we want to log but never re-throw from the message handler.
+    if (!inboxProcessor) return;
+    try {
+      const { classification, action } = await inboxProcessor.processItem(item);
+      if (!classification) {
+        await bot.sendMessage(chatId, `⚠️ No pude clasificar: ${action.message}`);
+        return;
+      }
+      const emoji = INBOX_CATEGORY_EMOJI[classification.category] ?? '🏷️';
+      const conf = `${Math.round(classification.confidence * 100)}%`;
+      await bot.sendMessage(chatId,
+        `${emoji} <b>${classification.category}</b> (${conf}) — ${action.message}`,
+        { parse_mode: 'HTML' });
+    } catch (error) {
+      logger.warn({ id: item.id, err: error.message }, 'inbox processing failed');
     }
   }
 

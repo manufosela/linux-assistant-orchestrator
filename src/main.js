@@ -35,6 +35,8 @@ import { createGmailClient } from './modules/email/gmail-client.js';
 import { createGoogleCalendarClient } from './modules/calendar/google-calendar-client.js';
 import { createGoogleDriveClient } from './modules/drive/google-drive-client.js';
 import { createInboxStore } from './modules/inbox/inbox-store.js';
+import { createInboxRouter } from './modules/inbox/inbox-router.js';
+import { createInboxProcessor } from './modules/inbox/inbox-processor.js';
 
 const startTime = new Date();
 
@@ -202,9 +204,19 @@ async function main() {
     driveClient = createGoogleDriveClient({ googleAuth, logger });
   }
 
-  // Inbox store — Telegram inbound items (documents, photos, voice, audio, video)
-  // are persisted here for later routing.
+  // Inbox: storage + classifier + dispatcher. Telegram inbound items
+  // (documents, photos, voice, audio, video) land in the store, get classified
+  // by the LLM-backed router, and dispatched to the matching action
+  // (note → notes/, descartar → marked discarded, foto/doc/voz → pending
+  // downstream cards).
   const inboxStore = createInboxStore({ inboxPath: config.inbox.path, logger });
+  const inboxRouter = createInboxRouter({ llmService, logger });
+  const inboxProcessor = createInboxProcessor({
+    router: inboxRouter,
+    inboxStore,
+    notesPath: config.inbox.notesPath,
+    logger,
+  });
 
   // Telegram bot
   let bot = null;
@@ -237,6 +249,7 @@ async function main() {
       calendarClient,
       driveClient,
       inboxStore,
+      inboxProcessor,
       router,
       logger,
     });
