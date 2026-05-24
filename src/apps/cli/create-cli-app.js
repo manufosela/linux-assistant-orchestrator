@@ -83,7 +83,7 @@ export function createCliApp(deps) {
  * }} deps
  */
 function registerCommands(deps) {
-  const { router, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, logger, remoteCodeTasksEnabled } = deps;
+  const { router, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, googleAuth, clusterStatus, logger, remoteCodeTasksEnabled } = deps;
 
   router.register('status', async ({ renderer }) => {
     const status = statusService.getStatus();
@@ -289,6 +289,58 @@ function registerCommands(deps) {
     }
   }, { description: 'Envía un anuncio hablado a un Echo de Alexa vía Home Assistant' });
 
+  router.register('google login', async ({ args, renderer }) => {
+    if (!googleAuth) {
+      renderer.error('Google auth no configurado. Añade google.credentialsPath y google.tokensPath en ~/.config/luis/config.json.');
+      return { exitCode: 1 };
+    }
+    const code = args.join(' ').trim();
+    if (!code) {
+      try {
+        const url = await googleAuth.generateAuthUrl();
+        renderer.print('1. Abre esta URL en tu navegador y autoriza el acceso (solo lectura de Gmail y Calendar):');
+        renderer.print('');
+        renderer.print(`   ${url}`);
+        renderer.print('');
+        renderer.print('2. Copia el código que te dé Google y ejecuta:');
+        renderer.print('');
+        renderer.print('   luis google login <CODIGO>');
+        return { exitCode: 0 };
+      } catch (error) {
+        logger.warn({ err: error?.message }, 'google login: generateAuthUrl failed');
+        renderer.error(`No pude generar la URL: ${error?.message ?? 'error desconocido'}`);
+        return { exitCode: 1 };
+      }
+    }
+    try {
+      await googleAuth.exchangeCode(code);
+      renderer.print('✅ Autorización completada. Los tokens se han guardado para uso futuro.');
+      return { exitCode: 0 };
+    } catch (error) {
+      logger.warn({ err: error?.message }, 'google login: exchangeCode failed');
+      renderer.error(`Falló el intercambio del código: ${error?.message ?? 'error desconocido'}`);
+      return { exitCode: 1 };
+    }
+  }, { description: 'Autoriza el acceso de LUIS a Gmail y Google Calendar (solo lectura)' });
+
+  router.register('google status', async ({ renderer }) => {
+    if (!googleAuth) {
+      renderer.warning('Google auth no configurado (falta google.credentialsPath / google.tokensPath en la config).');
+      return { exitCode: 1 };
+    }
+    try {
+      const configured = await googleAuth.isConfigured();
+      if (configured) {
+        renderer.print('✅ Google OAuth2 configurado (tokens presentes y válidos para refresh).');
+        return { exitCode: 0 };
+      }
+      renderer.warning('Google OAuth2 sin autorizar. Ejecuta `luis google login` para empezar.');
+      return { exitCode: 1 };
+    } catch (error) {
+      renderer.error(`No pude verificar el estado: ${error?.message ?? 'error desconocido'}`);
+      return { exitCode: 1 };
+    }
+  }, { description: 'Comprueba si Google OAuth2 está configurado' });
   router.register('cluster status', async ({ renderer }) => {
     if (!clusterStatus) {
       renderer.error('Monitorización del cluster no configurada.');

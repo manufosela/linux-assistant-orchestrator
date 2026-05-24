@@ -122,6 +122,11 @@ export function loadConfig(envPath = '.env') {
       readOnly: process.env.CALENDAR_READ_ONLY !== 'false',
     },
 
+    google: {
+      credentialsPath: process.env.GOOGLE_CREDENTIALS_PATH ?? '',
+      tokensPath: process.env.GOOGLE_TOKENS_PATH ?? '',
+    },
+
     planningGame: {
       baseUrl: process.env.PLANNING_GAME_BASE_URL ?? '',
       apiKey: process.env.PLANNING_GAME_API_KEY ?? '',
@@ -207,4 +212,5 @@ function validateConfig(config) {
  * @property {{ enabled: boolean, host: string, port: number }} web
  * @property {{ search: { baseUrl: string, apiKey: string }, urlFetch: { allowPrivateNetworks: boolean, privateAllowlist: string[] } }} webTools
  * @property {{ baseUrl: string, token: string, language: string, agentId: string }} homeAssistant
+ * @property {{ credentialsPath: string, tokensPath: string }} google
  */
