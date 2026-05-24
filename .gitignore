@@ -11,3 +11,11 @@ config/download-rules.json
 credentials.json
 google-tokens.json
 data/google-tokens.json
+# Local Docker overrides and runtime volumes
+docker-compose.override.yml
+/data/
+.kj/
+
+# Deploy helper is environment-specific and kept local only (not published)
+/scripts/deploy.sh
+

@@ -25,6 +25,7 @@ const DEFAULT_PUBLIC_DIR = resolve(HERE, 'public');
  *   urlFetcher?: import('../../modules/web/url-fetcher.js').UrlFetcher,
  *   webSearch?: import('../../modules/web/web-search.js').WebSearchService,
  *   homeAssistant?: import('../../modules/home-assistant/ha-client.js').HomeAssistantClient,
+ *   prometheusClient?: import('../../modules/prometheus/prometheus-client.js').PrometheusClient,
  *   logger: import('pino').Logger,
  *   host: string,
  *   port: number,
@@ -33,7 +34,7 @@ const DEFAULT_PUBLIC_DIR = resolve(HERE, 'public');
  * @returns {WebApp}
  */
 export function createWebApp(deps) {
-  const { llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, logger, host, port } = deps;
+  const { llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, notificationService, prometheusClient, watchtowerWebhookToken, logger, host, port } = deps;
   const publicDir = deps.publicDir ?? DEFAULT_PUBLIC_DIR;
 
   /** @type {Map<string, import('./web-routes.js').WebRouteHandler>} */
@@ -44,7 +45,7 @@ export function createWebApp(deps) {
     },
   };
 
-  registerWebRoutes({ registry, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, logger });
+  registerWebRoutes({ registry, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, notificationService, prometheusClient, watchtowerWebhookToken, logger });
 
   const server = http.createServer((req, res) => {
     handleRequest(req, res).catch((error) => {
@@ -212,11 +213,15 @@ function readJsonBody(req) {
         resolveRead(undefined);
         return;
       }
+      const text = Buffer.concat(chunks).toString('utf8');
       try {
-        const text = Buffer.concat(chunks).toString('utf8');
         resolveRead(JSON.parse(text));
-      } catch (error) {
-        reject(error);
+      } catch {
+        // Inbound webhooks from tools we don't control (e.g. Watchtower via
+        // shoutrrr) may not send strict JSON. Hand the raw text to the
+        // handler instead of rejecting; JSON-only handlers still type-check
+        // their fields and reject bad input themselves.
+        resolveRead(text);
       }
     });
 

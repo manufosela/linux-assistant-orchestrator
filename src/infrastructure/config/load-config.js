@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { homedir } from 'node:os';
 
 /**
  * Loads the .env file from the given path if it exists.
@@ -50,7 +51,7 @@ function parseCsvList(raw) {
 export function loadConfig(envPath = '.env') {
   loadDotEnv(envPath);
 
-  return {
+  const config = {
     env: process.env.NODE_ENV ?? 'development',
     logLevel: process.env.LOG_LEVEL ?? 'info',
     assistantName: process.env.ASSISTANT_NAME ?? 'assistant',
@@ -58,6 +59,36 @@ export function loadConfig(envPath = '.env') {
     telegram: {
       botToken: process.env.TELEGRAM_BOT_TOKEN ?? '',
       allowedChatIds: parseCsvList(process.env.TELEGRAM_ALLOWED_CHAT_IDS),
+      // Chat that receives unsolicited notifications (cluster alerts, etc.).
+      // Falls back to the first allowed chat when not set explicitly.
+      notifyChatId: process.env.TELEGRAM_NOTIFY_CHAT_ID ?? '',
+    },
+
+    watchtower: {
+      // Shared secret for the POST /api/hooks/watchtower webhook.
+      // Empty disables the endpoint (503).
+      webhookToken: process.env.WATCHTOWER_WEBHOOK_TOKEN ?? '',
+    },
+
+    cluster: {
+      enabled: process.env.CLUSTER_ENABLED !== 'false',
+      // No hardcoded LAN: the node IPs are deployment-specific and must be
+      // provided when the watcher is enabled (validated below).
+      n2Ip: process.env.CLUSTER_N2_IP ?? '',
+      n3Ip: process.env.CLUSTER_N3_IP ?? '',
+      n4Ip: process.env.CLUSTER_N4_IP ?? '',
+      historyPath:
+        process.env.CLUSTER_HISTORY_PATH ?? join(homedir(), '.config', 'luis', 'cluster-history.json'),
+    },
+
+    prometheus: {
+      // On-demand "is anything down?" checks against the Prometheus HTTP API.
+      // No watcher, no proactive alerts — only answered when the user asks.
+      // Opt-in (like the cluster watcher): set PROMETHEUS_ENABLED=true.
+      enabled: process.env.PROMETHEUS_ENABLED === 'true',
+      // Deployment-specific: Prometheus is reached over the LAN (validated below).
+      baseUrl: process.env.PROMETHEUS_BASE_URL ?? '',
+      timeoutMs: Number(process.env.PROMETHEUS_TIMEOUT_MS ?? 8000),
     },
 
     downloads: {
@@ -131,6 +162,36 @@ export function loadConfig(envPath = '.env') {
       agentId: process.env.HA_AGENT_ID ?? '',
     },
   };
+
+  validateConfig(config);
+  return config;
+}
+
+/**
+ * Fails fast on configuration that would otherwise break or silently misbehave
+ * at runtime. Keep messages actionable (tell the user exactly what to set).
+ *
+ * @param {AssistantConfig} config
+ */
+function validateConfig(config) {
+  if (config.cluster.enabled) {
+    const missing = ['n2Ip', 'n3Ip', 'n4Ip']
+      .filter((key) => !config.cluster[key])
+      .map((key) => `CLUSTER_${key.replace('Ip', '').toUpperCase()}_IP`);
+    if (missing.length > 0) {
+      throw new Error(
+        `Cluster watcher is enabled but ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not set. ` +
+          'Set them in your .env (see DEPLOYMENT.md) or set CLUSTER_ENABLED=false to disable the watcher.',
+      );
+    }
+  }
+
+  if (config.prometheus.enabled && !config.prometheus.baseUrl) {
+    throw new Error(
+      'Prometheus integration is enabled but PROMETHEUS_BASE_URL is not set. ' +
+        'Set it (e.g. http://192.168.1.7:9090) or set PROMETHEUS_ENABLED=false to disable it.',
+    );
+  }
 }
 
 /**
@@ -138,7 +199,10 @@ export function loadConfig(envPath = '.env') {
  * @property {string} env
  * @property {string} logLevel
  * @property {string} assistantName
- * @property {{ botToken: string, allowedChatIds: string[] }} telegram
+ * @property {{ botToken: string, allowedChatIds: string[], notifyChatId: string }} telegram
+ * @property {{ webhookToken: string }} watchtower
+ * @property {{ enabled: boolean, n2Ip: string, n3Ip: string, n4Ip: string, historyPath: string }} cluster
+ * @property {{ enabled: boolean, baseUrl: string, timeoutMs: number }} prometheus
  * @property {{ watchPath: string, rulesPath: string, enableLlmClassification: boolean }} downloads
  * @property {import('../../types/llm.js').LlmConfig} llm
  * @property {{ provider: string, readOnly: boolean }} email

@@ -17,6 +17,10 @@ import { createHomeAssistantStateCache } from '../../../modules/home-assistant/h
 import { createSmartHomeAssistantClient } from '../../../modules/home-assistant/ha-smart-client.js';
 import { createAlexaAnnouncer } from '../../../modules/home-assistant/ha-alexa-announcer.js';
 import { createGoogleAuth } from '../../../modules/google/google-auth.js';
+import { buildClusterTargets } from '../../../modules/cluster/cluster-targets.js';
+import { createClusterHealthChecker } from '../../../modules/cluster/cluster-health-checker.js';
+import { createClusterHistoryStore } from '../../../modules/cluster/cluster-history-store.js';
+import { createClusterStatusService } from '../../../modules/cluster/cluster-status-service.js';
 import { createCliApp } from '../create-cli-app.js';
 import { loadUserConfig } from '../user-config-loader.js';
 
@@ -137,6 +141,11 @@ async function main() {
       logger,
     });
   }
+  const clusterStatus = createClusterStatusService({
+    healthChecker: createClusterHealthChecker({ logger }),
+    targets: buildClusterTargets(config.cluster),
+    historyStore: createClusterHistoryStore({ filePath: config.cluster.historyPath, logger }),
+  });
 
   const app = createCliApp({
     llmService,
@@ -148,6 +157,7 @@ async function main() {
     homeAssistant,
     alexaAnnouncer,
     googleAuth,
+    clusterStatus,
     logger,
     appName: APP_NAME,
     appVersion: pkg.version,

@@ -10,12 +10,16 @@ The assistant is designed around a **local-first, privacy-first** principle: pri
 
 - **CLI** (`luis`) — interactive REPL plus non-interactive subcommands, sharing the same services as Telegram and the workers. Configurable per-user via `~/.config/luis/config.json`.
 - **Local web UI** — token-protected HTTP API + minimal vanilla-JS dashboard, reachable from the LAN
-- **Telegram bot** with commands: `/status`, `/downloads-rules`, `/llm-status`, `/help`
+- **Telegram bot** — commands `/start`, `/status`, `/llm_status`, `/downloads_rules`, `/fetch`, `/search`, `/ha`, `/anuncia`, `/cluster`, `/caidos`, `/reset`, `/help`, plus a natural-language fallback to the local LLM
 - **Authorized chat validation** — only configured Telegram chat IDs can use the bot
+- **Home Assistant integration** — natural-language control and Alexa/Echo announcements via HA
+- **Cluster watcher** — monitors remote nodes/services and alerts on Telegram on failure/recovery (see DEPLOYMENT.md)
+- **Prometheus down-check** — answers "is anything down?" on demand from a Prometheus instance (`up==0`, `probe_success==0`, firing alerts); no watcher, no proactive alerts (see DEPLOYMENT.md)
 - **Downloads watcher** — monitors a directory and organizes new files automatically
 - **Rule-based file classifier** — classifies files by extension using a JSON config
 - **LLM file classifier** — optional fallback to local LLM for unmatched files
-- **Local LLM provider abstraction** — connects to any OpenAI-compatible local endpoint (Ollama, llama.cpp, vLLM, LM Studio)
+- **Local LLM provider abstraction** — connects to any OpenAI-compatible local endpoint (Ollama, llama.cpp, vLLM, LM Studio, LiteLLM)
+- **Reproducible Docker deployment** — committed sanitized `docker-compose.yml`; every host/IP/token/path is env-configurable (see [DEPLOYMENT.md](DEPLOYMENT.md))
 - **Structured logging** — all events logged with pino, no prompt content logged by default
 - **Security placeholders** — dangerous command detection, approval service, command policy
 - **Unit tests** — core logic covered with Node.js built-in test runner
@@ -24,13 +28,12 @@ The assistant is designed around a **local-first, privacy-first** principle: pri
 
 ## What is intentionally not implemented yet
 
-- Email integration (Gmail API, Microsoft Graph)
-- Calendar integration (Google Calendar, Microsoft Graph)
+- Email integration (Gmail API, Microsoft Graph) — placeholder
+- Calendar integration (Google Calendar, Microsoft Graph) — placeholder
 - Planning Game integration
 - Coding agent execution (Codex, Claude CLI, Gemini CLI, Karajan)
 - Shell command execution for external tasks
 - Web UI or CLI approval flow
-- Natural language Telegram commands
 
 These modules exist as typed interfaces/placeholders and will be filled in future iterations.
 
@@ -47,9 +50,28 @@ These modules exist as typed interfaces/placeholders and will be filled in futur
 
 ## Installation
 
+Get the code:
+
 ```bash
-cd assistant
-pnpm install
+git clone https://github.com/manufosela/linux-assistant-orchestrator.git
+cd linux-assistant-orchestrator
+```
+
+Then either run it with Docker (recommended — see
+[DEPLOYMENT.md](DEPLOYMENT.md)):
+
+```bash
+cp .env.example .env     # then edit .env with your values
+docker compose build
+docker compose up -d
+```
+
+…or run it locally with Node.js (development):
+
+```bash
+pnpm install             # requires Node.js >= 20 and pnpm
+cp .env.example .env     # then edit .env with your values
+pnpm start
 ```
 
 ---
@@ -62,21 +84,26 @@ Copy the example environment file:
 cp .env.example .env
 ```
 
-Edit `.env` with your values:
+Edit `.env` with your values. The most common ones:
 
 | Variable | Description | Default |
 |---|---|---|
-| `ASSISTANT_NAME` | Display name of the assistant | `karajan-assistant` |
-| `TELEGRAM_BOT_TOKEN` | Your Telegram bot token | *(required)* |
-| `TELEGRAM_ALLOWED_CHAT_IDS` | Comma-separated list of allowed chat IDs | *(required)* |
-| `DOWNLOADS_PATH` | Directory to watch for new downloads | `/home/manu/Descargas` |
+| `ASSISTANT_NAME` | Display name of the assistant | `assistant` |
+| `TELEGRAM_BOT_TOKEN` | Your Telegram bot token | *(required for the bot)* |
+| `TELEGRAM_ALLOWED_CHAT_IDS` | Comma-separated list of allowed chat IDs | *(required for the bot)* |
+| `DOWNLOADS_PATH` | Directory to watch for new downloads | `/tmp/downloads` |
 | `DOWNLOAD_RULES_PATH` | Path to your download rules JSON file | `./config/download-rules.json` |
 | `ENABLE_LLM_FILE_CLASSIFICATION` | Use LLM to classify files with no matching rule | `false` |
 | `LLM_PROVIDER` | LLM provider to use (`local` or `cloud`) | `local` |
-| `LOCAL_LLM_BASE_URL` | Base URL of your local LLM HTTP API | `http://192.168.1.10:11434` |
+| `LOCAL_LLM_BASE_URL` | Base URL of your local LLM HTTP API | `http://localhost:11434` |
 | `LOCAL_LLM_MODEL` | Model name to use | *(required for completions)* |
 | `LOCAL_LLM_TIMEOUT_MS` | Timeout for LLM requests in ms | `120000` |
 | `ALLOW_CLOUD_LLM` | Allow cloud LLM providers | `false` |
+
+No host, IP, token or path is hardcoded in the source — see
+**[DEPLOYMENT.md](DEPLOYMENT.md)** for the **complete** variable reference
+(Home Assistant, web search, cluster watcher…), how to obtain each credential,
+and a reproducible Docker Compose setup.
 
 ---
 
@@ -124,7 +151,7 @@ Example:
     {
       "name": "PDF documents",
       "extensions": [".pdf"],
-      "targetPath": "/home/manu/Documentos/PDF"
+      "targetPath": "/home/<user>/Documents/PDF"
     }
   ]
 }
@@ -157,7 +184,7 @@ LOCAL_LLM_MODEL=my-model
 ### vLLM
 
 ```env
-LOCAL_LLM_BASE_URL=http://192.168.1.10:8000
+LOCAL_LLM_BASE_URL=http://<llm-host>:8000
 LOCAL_LLM_MODEL=mistral-7b
 ```
 
@@ -205,7 +232,7 @@ pnpm unlink --global
     "provider": "local",
     "allowCloudLlm": false,
     "local": {
-      "baseUrl": "http://192.168.1.11:11434/v1",
+      "baseUrl": "http://<llm-host>:11434/v1",
       "model": "gemma4:e4b",
       "timeoutMs": 600000
     }
@@ -335,7 +362,9 @@ All `/api/*` endpoints require the access token via:
 |---|---|
 | `GET /api/status` | Assistant name, uptime, modules. |
 | `GET /api/llm/status` | Health of the local LLM provider. Returns 503 when unhealthy. |
-| `POST /api/ask` | Body: `{ "prompt": "..." }`. Calls `llmService.generateText` with `module='web'`, `private=true`. |
+| `POST /api/ask` | Body: `{ "prompt": "..." }`. Calls `llmService.generateText` with `module='web'`, `private=true`. A natural-language "is anything down?" prompt is answered from Prometheus instead of the LLM. |
+| `POST /api/chat` | Body: `{ "messages": [...] }`. Multi-turn chat. Like `/api/ask`, a down-check question in the last user message is answered from Prometheus. |
+| `GET /api/prometheus/status` | Structured "is anything down?" report from Prometheus (`{ downTargets, downProbes, firingAlerts, anythingDown, ... }`). 503 if the integration is disabled. |
 | `GET /api/downloads/rules` | Lists configured download rules. |
 | `POST /api/downloads/organize` | Placeholder until the organizer service is wired. |
 | `GET /` | Serves the static UI from `src/apps/web/public/`. |
@@ -361,15 +390,31 @@ All `/api/*` endpoints require the access token via:
 
 ## Starting the assistant
 
+### Locally (development)
+
 ```bash
 pnpm start
 ```
+
+### Docker (recommended for a real deployment)
+
+```bash
+cp .env.example .env   # fill in your values
+docker compose build
+docker compose up -d
+```
+
+The committed `docker-compose.yml` is fully parametrized (no hardcoded
+hosts/tokens). See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the full guide:
+obtaining credentials, the complete env reference, the cluster watcher
+topology, and how to update an existing deployment (git-on-server or rsync).
 
 The assistant will:
 1. Load configuration from `.env`
 2. Start the downloads watcher
 3. Start the Telegram bot (if token configured)
-4. Listen for commands
+4. Start the cluster watcher (if `CLUSTER_ENABLED=true`)
+5. Listen for commands
 
 Stop with `Ctrl+C` or send `SIGTERM`.
 

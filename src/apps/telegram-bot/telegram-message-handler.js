@@ -1,6 +1,10 @@
 import { createConversationManager } from '../cli/conversation-manager.js';
 import { createThinkingIndicator } from './thinking-indicator.js';
 import { parseAnnounceInvocation, listTargetChoices } from '../../modules/home-assistant/ha-alexa-announcer.js';
+import { parseClusterIntent } from '../../modules/cluster/cluster-intent.js';
+import { formatClusterStatus, formatClusterHistory } from '../../modules/cluster/cluster-status-service.js';
+import { parsePrometheusIntent } from '../../modules/prometheus/prometheus-intent.js';
+import { formatDownReport } from '../../modules/prometheus/prometheus-formatter.js';
 
 const ANNOUNCE_PENDING_TTL_MS = 5 * 60 * 1000;
 const ANNOUNCE_CALLBACK_PREFIX = 'anuncia:';
@@ -24,11 +28,13 @@ const SYSTEM_PROMPT =
  * @param {import('../../modules/web/url-fetcher.js').UrlFetcher} [deps.urlFetcher]
  * @param {import('../../modules/web/web-search.js').WebSearchService} [deps.webSearch]
  * @param {import('../../modules/home-assistant/ha-client.js').HomeAssistantClient} [deps.homeAssistant]
+ * @param {import('../../modules/cluster/cluster-status-service.js').ClusterStatusService} [deps.clusterStatus]
+ * @param {import('../../modules/prometheus/prometheus-client.js').PrometheusClient} [deps.prometheusClient]
  * @param {import('../../apps/telegram-bot/telegram-command-router.js').TelegramCommandRouter} deps.router
  * @param {import('pino').Logger} deps.logger
  * @returns {void}
  */
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -347,6 +353,69 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     }
   });
 
+  /**
+   * Runs a cluster query and returns an HTML-ready reply.
+   *
+   * @param {'status'|'history'} kind
+   * @returns {Promise<string>}
+   */
+  async function buildClusterReply(kind) {
+    if (kind === 'history') {
+      const incidents = await clusterStatus.history();
+      const body = formatClusterHistory(incidents).map(escapeHtml).join('\n');
+      return `🖥️ <b>Cluster — últimas incidencias</b>\n<pre>${body}</pre>`;
+    }
+    const results = await clusterStatus.probe();
+    const body = formatClusterStatus(results).map(escapeHtml).join('\n');
+    const anyDown = results.some((r) => !r.ok);
+    const header = anyDown ? '⚠️ <b>Cluster — hay servicios caídos</b>' : '✅ <b>Cluster — todo OK</b>';
+    return `${header}\n<pre>${body}</pre>`;
+  }
+
+  router.register('/cluster', async (message) => {
+    const chatId = message.chat.id;
+    if (!clusterStatus) {
+      await bot.sendMessage(chatId, '⚠️ Monitorización del cluster no configurada.');
+      return;
+    }
+    const arg = extractArgs(message.text).toLowerCase();
+    const kind = /^(history|historial|incidencias)/.test(arg) ? 'history' : 'status';
+    const indicator = await createThinkingIndicator(bot, chatId, { text: '🖥️ Consultando el cluster…', logger });
+    try {
+      const reply = await buildClusterReply(kind);
+      await indicator.finish(reply, { parse_mode: 'HTML' });
+    } catch (error) {
+      logger.warn({ chatId, err: error.message }, '/cluster failed');
+      await indicator.finish(`❌ No pude consultar el cluster: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+    }
+  });
+
+  /**
+   * Queries Prometheus and returns the HTML answer for the "is anything down?"
+   * question. Shared by the `/caidos` command and the natural-language intent.
+   *
+   * @returns {Promise<string>}
+   */
+  async function buildPrometheusReply() {
+    const report = await prometheusClient.getDownReport();
+    return formatDownReport(report).html;
+  }
+
+  router.register('/caidos', async (message) => {
+    const chatId = message.chat.id;
+    if (!prometheusClient) {
+      await bot.sendMessage(chatId, '⚠️ Integración con Prometheus no configurada.');
+      return;
+    }
+    const indicator = await createThinkingIndicator(bot, chatId, { text: '📊 Consultando Prometheus…', logger });
+    try {
+      await indicator.finish(await buildPrometheusReply(), { parse_mode: 'HTML' });
+    } catch (error) {
+      logger.warn({ chatId, err: error.message }, '/caidos failed');
+      await indicator.finish(`❌ No pude consultar Prometheus: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+    }
+  });
+
   router.register('/help', async (message) => {
     const chatId = message.chat.id;
     const text = [
@@ -357,6 +426,8 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '<b>Comandos:</b>',
       '/fetch &lt;url&gt; — descargar URL al contexto',
       '/search &lt;query&gt; — buscar en la web',
+      '/cluster [historial] — estado del cluster (n2/n3/n4) o sus incidencias',
+      '/caidos — ¿hay algún servicio caído? (vía Prometheus)',
       '/ha &lt;texto&gt; — pedir algo a Home Assistant',
       '/anuncia &lt;destino&gt; &lt;texto&gt; — anuncio en Alexa (o sin destino para elegir)',
       '/reset — borrar la conversación',
@@ -372,6 +443,39 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     const chatId = message.chat.id;
     const text = (message.text ?? '').trim();
     if (!text) return;
+
+    // Natural-language cluster queries ("estado del cluster", "status cluster")
+    // are answered directly, without going through the LLM.
+    if (clusterStatus) {
+      const clusterIntent = parseClusterIntent(text);
+      if (clusterIntent) {
+        const indicator = await createThinkingIndicator(bot, chatId, { text: '🖥️ Consultando el cluster…', logger });
+        try {
+          const reply = await buildClusterReply(clusterIntent.kind);
+          await indicator.finish(reply, { parse_mode: 'HTML' });
+        } catch (error) {
+          logger.warn({ chatId, err: error.message }, 'NL cluster query failed');
+          await indicator.finish(`❌ No pude consultar el cluster: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+        }
+        return;
+      }
+    }
+
+    // Natural-language "is anything down?" queries are answered from Prometheus,
+    // also without going through the LLM.
+    if (prometheusClient) {
+      const prometheusIntent = parsePrometheusIntent(text);
+      if (prometheusIntent) {
+        const indicator = await createThinkingIndicator(bot, chatId, { text: '📊 Consultando Prometheus…', logger });
+        try {
+          await indicator.finish(await buildPrometheusReply(), { parse_mode: 'HTML' });
+        } catch (error) {
+          logger.warn({ chatId, err: error.message }, 'NL prometheus query failed');
+          await indicator.finish(`❌ No pude consultar Prometheus: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+        }
+        return;
+      }
+    }
 
     const conversation = getConversation(chatId);
     conversation.appendUser(text);
