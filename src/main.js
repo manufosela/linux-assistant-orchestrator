@@ -37,6 +37,7 @@ import { createGoogleDriveClient } from './modules/drive/google-drive-client.js'
 import { createInboxStore } from './modules/inbox/inbox-store.js';
 import { createInboxRouter } from './modules/inbox/inbox-router.js';
 import { createInboxProcessor } from './modules/inbox/inbox-processor.js';
+import { createMarkitdownClient } from './modules/inbox/markitdown-client.js';
 
 const startTime = new Date();
 
@@ -211,10 +212,21 @@ async function main() {
   // downstream cards).
   const inboxStore = createInboxStore({ inboxPath: config.inbox.path, logger });
   const inboxRouter = createInboxRouter({ llmService, logger });
+  const markitdownClient = config.inbox.markitdownUrl
+    ? createMarkitdownClient({
+        baseUrl: config.inbox.markitdownUrl,
+        timeoutMs: config.inbox.markitdownTimeoutMs,
+        logger,
+      })
+    : null;
+  if (!markitdownClient) {
+    logger.info('Markitdown extraction disabled (set MARKITDOWN_URL to enable)');
+  }
   const inboxProcessor = createInboxProcessor({
     router: inboxRouter,
     inboxStore,
     notesPath: config.inbox.notesPath,
+    markitdownClient,
     logger,
   });
 

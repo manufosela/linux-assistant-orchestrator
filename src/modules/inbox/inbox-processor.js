@@ -17,8 +17,14 @@ import { join } from 'node:path';
  *
  * Pending downstream cards (only annotate + log, no side-effect yet):
  *   - voz                        → waiting on transcription (TSK-0048)
- *   - foto, documento, estudio   → waiting on Drive upload (TSK-0049)
+ *   - foto                       → waiting on Drive upload (TSK-0049)
  *   - revisar                    → low-confidence, waiting on human decision
+ *
+ * Markitdown extraction (TSK-0051, optional):
+ *   - documento, estudio → if markitdownClient is configured, extracts text
+ *     via the sidecar, writes `extracted.md` in the item dir and annotates
+ *     `extraction` in meta.json. Still pending Drive upload (TSK-0049).
+ *     If the sidecar fails or is missing, falls back to plain pending.
  *
  * Never throws. On classifier or dispatch error the item is marked 'error'
  * via inboxStore so the user can find it later.
@@ -27,12 +33,13 @@ import { join } from 'node:path';
  *   router: { classify: Function },
  *   inboxStore: { markRouted: Function, markError: Function },
  *   notesPath: string,
+ *   markitdownClient?: { convertFile: Function },
  *   logger?: import('pino').Logger,
  *   now?: () => Date,
  * }} deps
  * @returns {InboxProcessor}
  */
-export function createInboxProcessor({ router, inboxStore, notesPath, logger, now = () => new Date() }) {
+export function createInboxProcessor({ router, inboxStore, notesPath, markitdownClient = null, logger, now = () => new Date() }) {
   if (!router) throw new Error('createInboxProcessor requires router');
   if (!inboxStore) throw new Error('createInboxProcessor requires inboxStore');
   if (!notesPath) throw new Error('createInboxProcessor requires notesPath');
@@ -91,11 +98,12 @@ export function createInboxProcessor({ router, inboxStore, notesPath, logger, no
           markRouted: false,
           message: 'pendiente transcripción (TSK-0048)',
         };
-      case 'foto':
       case 'documento':
       case 'estudio':
+        return extractDocument(itemRef, classification.category);
+      case 'foto':
         return {
-          kind: `pending-${classification.category}`,
+          kind: 'pending-foto',
           markRouted: false,
           message: 'pendiente subida a Drive (TSK-0049)',
         };
@@ -112,6 +120,53 @@ export function createInboxProcessor({ router, inboxStore, notesPath, logger, no
           message: `categoría no manejada: ${classification.category}`,
         };
     }
+  }
+
+  async function extractDocument(itemRef, category) {
+    if (!markitdownClient || !itemRef.meta.fileName) {
+      return {
+        kind: `pending-${category}`,
+        markRouted: false,
+        message: 'pendiente subida a Drive (TSK-0049)',
+      };
+    }
+    const filePath = join(itemRef.dir, itemRef.meta.fileName);
+    try {
+      const { text, title } = await markitdownClient.convertFile(filePath);
+      const extractedPath = join(itemRef.dir, 'extracted.md');
+      await writeFile(extractedPath, text ?? '', 'utf8');
+      const words = (text ?? '').split(/\s+/).filter(Boolean).length;
+      await annotateExtraction(itemRef, { path: extractedPath, words, title: title ?? null });
+      const titleSuffix = title ? `, "${title}"` : '';
+      return {
+        kind: `extracted-${category}`,
+        markRouted: false,
+        message: `${category} extraído (${words} palabras${titleSuffix}) — pendiente Drive`,
+      };
+    } catch (error) {
+      // Graceful fallback: the item is safe in the inbox, just no extraction.
+      logger?.warn({ id: itemRef.id, err: error.message }, 'markitdown extract failed');
+      return {
+        kind: `${category}-extract-failed`,
+        markRouted: false,
+        message: `extracción falló (${error.message.slice(0, 80)}) — pendiente Drive`,
+      };
+    }
+  }
+
+  async function annotateExtraction(itemRef, extraction) {
+    const metaPath = join(itemRef.dir, 'meta.json');
+    let current;
+    try {
+      current = JSON.parse(await readFile(metaPath, 'utf8'));
+    } catch {
+      current = itemRef.meta;
+    }
+    const next = {
+      ...current,
+      extraction: { ...extraction, at: now().toISOString() },
+    };
+    await writeFile(metaPath, JSON.stringify(next, null, 2), 'utf8');
   }
 
   async function writeNote(itemRef, kind) {

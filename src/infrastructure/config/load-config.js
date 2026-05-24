@@ -100,6 +100,10 @@ export function loadConfig(envPath = '.env') {
     inbox: {
       path: process.env.INBOX_PATH ?? '/data/inbox',
       notesPath: process.env.INBOX_NOTES_PATH ?? '/data/notes',
+      // Markitdown sidecar (TSK-0051). Optional: if empty, doc/estudio just
+      // stay pending without text extraction (graceful fallback).
+      markitdownUrl: process.env.MARKITDOWN_URL ?? '',
+      markitdownTimeoutMs: Number(process.env.MARKITDOWN_TIMEOUT_MS ?? 60000),
     },
 
     llm: {
@@ -209,7 +213,7 @@ function validateConfig(config) {
  * @property {{ enabled: boolean, n2Ip: string, n3Ip: string, n4Ip: string, historyPath: string }} cluster
  * @property {{ enabled: boolean, baseUrl: string, timeoutMs: number }} prometheus
  * @property {{ watchPath: string, rulesPath: string, enableLlmClassification: boolean }} downloads
- * @property {{ path: string, notesPath: string }} inbox
+ * @property {{ path: string, notesPath: string, markitdownUrl: string, markitdownTimeoutMs: number }} inbox
  * @property {import('../../types/llm.js').LlmConfig} llm
  * @property {{ provider: string, readOnly: boolean }} email
  * @property {{ provider: string, readOnly: boolean }} calendar

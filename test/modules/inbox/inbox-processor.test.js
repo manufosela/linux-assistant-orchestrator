@@ -122,7 +122,7 @@ describe('inbox-processor — descartar', () => {
 });
 
 describe('inbox-processor — categorías pendientes de cards posteriores', () => {
-  for (const category of ['voz', 'foto', 'documento', 'estudio', 'revisar']) {
+  for (const category of ['voz', 'foto', 'revisar']) {
     it(`${category} → no markRouted, no fichero, solo annotation`, async () => {
       const item = makeItem();
       await seedMeta(item);
@@ -157,6 +157,104 @@ describe('inbox-processor — annotation', () => {
     assert.equal(meta.textCaption, 'idea cualquiera');
     assert.equal(meta.classification.category, 'idea');
     assert.equal(meta.classification.at, fixedDate.toISOString());
+  });
+});
+
+describe('inbox-processor — documento/estudio (Markitdown)', () => {
+  function fakeMarkitdown({ text = '# Doc\n\ntexto extraído', title = 'Doc Title' } = {}) {
+    return { convertFile: async () => ({ text, title, filename: 'foo.pdf' }) };
+  }
+
+  it('documento → llama a markitdown, escribe extracted.md, anota meta.extraction', async () => {
+    const item = makeItem({ fileName: 'foo.pdf' });
+    await seedMeta(item);
+    await writeFile(join(item.dir, 'foo.pdf'), 'PDF BYTES');
+    const router = fakeRouter({ category: 'documento', confidence: 0.9, reasoning: 'PDF' });
+    const store = fakeInboxStore();
+    const proc = createInboxProcessor({
+      router, inboxStore: store, notesPath: notesDir,
+      markitdownClient: fakeMarkitdown(),
+      now: () => fixedDate,
+    });
+
+    const result = await proc.processItem(item);
+
+    assert.equal(result.action.kind, 'extracted-documento');
+    assert.equal(store.calls.markRouted.length, 0); // still pending Drive
+    const extracted = await readFile(join(item.dir, 'extracted.md'), 'utf8');
+    assert.match(extracted, /texto extraído/);
+    const meta = JSON.parse(await readFile(join(item.dir, 'meta.json'), 'utf8'));
+    assert.equal(meta.extraction.title, 'Doc Title');
+    assert.ok(meta.extraction.words > 0);
+    assert.equal(meta.extraction.at, fixedDate.toISOString());
+  });
+
+  it('estudio → mismo flujo que documento', async () => {
+    const item = makeItem({ fileName: 'paper.pdf' });
+    await seedMeta(item);
+    await writeFile(join(item.dir, 'paper.pdf'), 'PDF');
+    const router = fakeRouter({ category: 'estudio', confidence: 0.9, reasoning: 'paper' });
+    const proc = createInboxProcessor({
+      router, inboxStore: fakeInboxStore(), notesPath: notesDir,
+      markitdownClient: fakeMarkitdown({ text: 'lorem ipsum' }),
+      now: () => fixedDate,
+    });
+
+    const result = await proc.processItem(item);
+
+    assert.equal(result.action.kind, 'extracted-estudio');
+  });
+
+  it('sin markitdownClient → fallback a pending sin extraer', async () => {
+    const item = makeItem({ fileName: 'foo.pdf' });
+    await seedMeta(item);
+    const router = fakeRouter({ category: 'documento', confidence: 0.9, reasoning: 'r' });
+    const proc = createInboxProcessor({
+      router, inboxStore: fakeInboxStore(), notesPath: notesDir,
+      now: () => fixedDate,
+    });
+
+    const result = await proc.processItem(item);
+
+    assert.equal(result.action.kind, 'pending-documento');
+    await assert.rejects(() => stat(join(item.dir, 'extracted.md')));
+  });
+
+  it('item documento sin fichero adjunto → pending sin tocar markitdown', async () => {
+    const item = makeItem({ fileName: null });
+    await seedMeta(item);
+    let called = false;
+    const md = { convertFile: async () => { called = true; return { text: 'x', title: null }; } };
+    const router = fakeRouter({ category: 'documento', confidence: 0.9, reasoning: 'r' });
+    const proc = createInboxProcessor({
+      router, inboxStore: fakeInboxStore(), notesPath: notesDir,
+      markitdownClient: md, now: () => fixedDate,
+    });
+
+    const result = await proc.processItem(item);
+
+    assert.equal(result.action.kind, 'pending-documento');
+    assert.equal(called, false);
+  });
+
+  it('markitdown falla → graceful fallback, no marca error, queda pending', async () => {
+    const item = makeItem({ fileName: 'foo.pdf' });
+    await seedMeta(item);
+    await writeFile(join(item.dir, 'foo.pdf'), 'PDF');
+    const md = { convertFile: async () => { throw new Error('sidecar 500'); } };
+    const router = fakeRouter({ category: 'documento', confidence: 0.9, reasoning: 'r' });
+    const store = fakeInboxStore();
+    const proc = createInboxProcessor({
+      router, inboxStore: store, notesPath: notesDir,
+      markitdownClient: md, now: () => fixedDate,
+    });
+
+    const result = await proc.processItem(item);
+
+    assert.equal(result.action.kind, 'documento-extract-failed');
+    assert.equal(store.calls.markError.length, 0); // sin markError, solo log
+    assert.equal(store.calls.markRouted.length, 0);
+    assert.match(result.action.message, /sidecar 500/);
   });
 });
 
