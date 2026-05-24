@@ -9,6 +9,8 @@ import { parseEmailIntent } from '../../modules/email/email-intent.js';
 import { parseCalendarIntent } from '../../modules/calendar/calendar-intent.js';
 import { parseDriveIntent } from '../../modules/drive/drive-intent.js';
 import { extractLeadingUrl, isUrl } from '../../modules/inbox/url-capture.js';
+import { parseInboxIntent } from '../../modules/inbox/inbox-intent.js';
+import { formatInboxResults } from '../../modules/inbox/inbox-formatter.js';
 import { rename } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
@@ -51,7 +53,7 @@ const INBOX_CATEGORY_EMOJI = {
   revisar: '🤔',
 };
 
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -488,6 +490,18 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
   // ── Inbox: capturar adjuntos del bot (documentos, fotos, voz, audio, vídeo) ──
   // Telegram dispara estos eventos además de 'message'. El handler de 'message'
   // (en main.js → router.route) solo gestiona texto, así que no hay solapamiento.
+  router.register('/inbox', async (message) => {
+    const chatId = message.chat.id;
+    if (!inboxQuery) {
+      await bot.sendMessage(chatId, 'Inbox query no está configurado.');
+      return;
+    }
+    const args = extractArgs(message.text ?? '').trim();
+    // Treat args as natural-language modifier (e.g., "/inbox semana", "/inbox mis fotos")
+    const intent = parseInboxIntent(`inbox ${args}`) ?? parseInboxIntent('/inbox');
+    await runInboxQuery(intent, chatId);
+  });
+
   router.register('/guarda', async (message) => {
     const chatId = message.chat.id;
     if (!urlCapture || !inboxStore) {
@@ -520,6 +534,34 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
    * @param {object} msg Telegram message
    * @param {'document'|'photo'|'voice'|'audio'|'video'} kind
    */
+  /**
+   * Runs an inbox query intent and replies with the formatted result.
+   *
+   * @param {object} intent  Result of parseInboxIntent
+   * @param {number|string} chatId
+   */
+  async function runInboxQuery(intent, chatId) {
+    const indicator = await createThinkingIndicator(bot, chatId, {
+      text: '📥 Consultando inbox…',
+      logger,
+    });
+    try {
+      const items = await inboxQuery.query({
+        since: intent.since,
+        until: intent.until,
+        categories: intent.categories,
+      });
+      const reply = formatInboxResults(items, { label: intent.label });
+      await indicator.finish(reply, { parse_mode: 'HTML', disable_web_page_preview: true });
+    } catch (error) {
+      logger.warn({ chatId, err: error.message }, 'inbox query failed');
+      await indicator.finish(
+        `❌ No pude consultar el inbox: ${escapeHtml(error.message)}`,
+        { parse_mode: 'HTML' },
+      );
+    }
+  }
+
   /**
    * Capture a URL (from leading-URL detection or /guarda) and reply on Telegram.
    *
@@ -622,6 +664,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '/agenda [hoy|mañana|semana|próximo] — eventos del calendario',
       '/drive [buscar &lt;texto&gt;] — listar raíz o buscar en Drive (solo lectura)',
       '/guarda &lt;url&gt; — capturar URL al inbox (también auto-detectado si el mensaje empieza por http(s)://)',
+      '/inbox [hoy|semana|mes|todo] — listar lo guardado (\"qué guardaste hoy?\", \"mis notas\", \"mis estudios de la semana\"…)',
       '/reset — borrar la conversación',
       '/status — estado del asistente',
       '/llm_status — estado del LLM',
@@ -646,6 +689,16 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       const leadingUrl = extractLeadingUrl(text);
       if (leadingUrl) {
         await captureUrlReply(leadingUrl, message);
+        return;
+      }
+    }
+
+    // Inbox query (TSK-0050): "qué guardaste hoy?", "muestra mis notas", etc.
+    // Detected via natural language, before falling through to other intents.
+    if (inboxQuery) {
+      const inboxIntent = parseInboxIntent(text);
+      if (inboxIntent) {
+        await runInboxQuery(inboxIntent, chatId);
         return;
       }
     }
