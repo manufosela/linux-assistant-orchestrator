@@ -30,6 +30,9 @@ import { createClusterHistoryStore } from './modules/cluster/cluster-history-sto
 import { createClusterStatusService } from './modules/cluster/cluster-status-service.js';
 import { createClusterWatcher } from './modules/cluster/cluster-watcher.js';
 import { createPrometheusClient } from './modules/prometheus/prometheus-client.js';
+import { createGoogleAuth } from './modules/google/google-auth.js';
+import { createGmailClient } from './modules/email/gmail-client.js';
+import { createGoogleCalendarClient } from './modules/calendar/google-calendar-client.js';
 
 const startTime = new Date();
 
@@ -181,6 +184,20 @@ async function main() {
     alexaAnnouncer = createAlexaAnnouncer({ haClient: baseClient, logger });
   }
 
+  // Google: OAuth2 + Gmail + Calendar (read-only)
+  let googleAuth;
+  let gmailClient;
+  let calendarClient;
+  if (config.google.credentialsPath && config.google.tokensPath) {
+    googleAuth = createGoogleAuth({
+      credentialsPath: config.google.credentialsPath,
+      tokensPath: config.google.tokensPath,
+      logger,
+    });
+    gmailClient = createGmailClient({ googleAuth, llmService, logger });
+    calendarClient = createGoogleCalendarClient({ googleAuth, logger });
+  }
+
   // Telegram bot
   let bot = null;
   let telegramStop = async () => {};
@@ -208,6 +225,8 @@ async function main() {
       alexaAnnouncer,
       clusterStatus: clusterStatusService,
       prometheusClient,
+      gmailClient,
+      calendarClient,
       router,
       logger,
     });
