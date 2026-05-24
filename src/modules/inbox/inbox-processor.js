@@ -39,6 +39,8 @@ import { join } from 'node:path';
  * }} deps
  * @returns {InboxProcessor}
  */
+const OCR_THRESHOLD_WORDS = 50;
+
 export function createInboxProcessor({ router, inboxStore, notesPath, markitdownClient = null, logger, now = () => new Date() }) {
   if (!router) throw new Error('createInboxProcessor requires router');
   if (!inboxStore) throw new Error('createInboxProcessor requires inboxStore');
@@ -102,11 +104,7 @@ export function createInboxProcessor({ router, inboxStore, notesPath, markitdown
       case 'estudio':
         return extractDocument(itemRef, classification.category);
       case 'foto':
-        return {
-          kind: 'pending-foto',
-          markRouted: false,
-          message: 'pendiente subida a Drive (TSK-0049)',
-        };
+        return processPhoto(itemRef);
       case 'revisar':
         return {
           kind: 'needs-review',
@@ -120,6 +118,91 @@ export function createInboxProcessor({ router, inboxStore, notesPath, markitdown
           message: `categoría no manejada: ${classification.category}`,
         };
     }
+  }
+
+  /**
+   * Photos classified by hard rule (no caption → 'foto') may actually be a
+   * screenshot of an article, a receipt, a sign. Run OCR via Markitdown and
+   * if the text turns out to be substantial (>= OCR_THRESHOLD_WORDS), treat
+   * the photo as a 'documento' instead.
+   */
+  async function processPhoto(itemRef) {
+    if (!markitdownClient || !itemRef.meta.fileName) {
+      return {
+        kind: 'pending-foto',
+        markRouted: false,
+        message: 'pendiente subida a Drive (TSK-0049)',
+      };
+    }
+    const filePath = join(itemRef.dir, itemRef.meta.fileName);
+    let ocr;
+    try {
+      ocr = await markitdownClient.convertFile(filePath);
+    } catch (error) {
+      logger?.warn({ id: itemRef.id, err: error.message }, 'OCR on photo failed');
+      return {
+        kind: 'pending-foto',
+        markRouted: false,
+        message: `OCR falló (${error.message.slice(0, 60)}) — pendiente Drive`,
+      };
+    }
+
+    const words = (ocr.text ?? '').split(/\s+/).filter(Boolean).length;
+    if (words < OCR_THRESHOLD_WORDS) {
+      // Not enough text to consider it a document. Annotate the attempt so we
+      // don't retry, but stay as a plain photo.
+      await annotateExtraction(itemRef, {
+        path: null,
+        words,
+        title: ocr.title ?? null,
+        source: 'ocr-no-text',
+      });
+      return {
+        kind: 'pending-foto',
+        markRouted: false,
+        message: words > 0
+          ? `foto (OCR: solo ${words} palabras, sin contenido suficiente) — pendiente Drive`
+          : 'foto (sin texto OCR) — pendiente Drive',
+      };
+    }
+
+    // Substantial OCR text — reclassify as documento.
+    const extractedPath = join(itemRef.dir, 'extracted.md');
+    await writeFile(extractedPath, ocr.text, 'utf8');
+    await annotateExtraction(itemRef, {
+      path: extractedPath,
+      words,
+      title: ocr.title ?? null,
+      source: 'ocr',
+    });
+    await overrideCategory(itemRef, 'documento', `OCR detectó ${words} palabras → reclasificado desde foto`);
+    const titleSuffix = ocr.title ? `, "${ocr.title}"` : '';
+    return {
+      kind: 'extracted-foto-as-documento',
+      markRouted: false,
+      message: `OCR detectó ${words} palabras${titleSuffix} → reclasificado como documento — pendiente Drive`,
+    };
+  }
+
+  async function overrideCategory(itemRef, newCategory, reasonAddendum) {
+    const metaPath = join(itemRef.dir, 'meta.json');
+    let current;
+    try {
+      current = JSON.parse(await readFile(metaPath, 'utf8'));
+    } catch {
+      current = itemRef.meta;
+    }
+    const previous = current.classification ?? {};
+    const next = {
+      ...current,
+      classification: {
+        ...previous,
+        category: newCategory,
+        reasoning: previous.reasoning ? `${previous.reasoning} | ${reasonAddendum}` : reasonAddendum,
+        overriddenFrom: previous.category ?? null,
+      },
+    };
+    await writeFile(metaPath, JSON.stringify(next, null, 2), 'utf8');
   }
 
   async function extractDocument(itemRef, category) {
