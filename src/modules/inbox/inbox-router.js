@@ -78,7 +78,7 @@ const SYSTEM_PROMPT = [
  * }} deps
  * @returns {InboxRouter}
  */
-export function createInboxRouter({ llmService, logger, confidenceThreshold = 0.6 }) {
+export function createInboxRouter({ llmService, logger, confidenceThreshold = 0.6, classifyModel = null }) {
   if (!llmService) throw new Error('createInboxRouter requires llmService');
 
   /**
@@ -100,14 +100,23 @@ export function createInboxRouter({ llmService, logger, confidenceThreshold = 0.
     const userPrompt = buildUserPrompt(item);
     let raw;
     try {
-      raw = await llmService.generateText(userPrompt, {
-        systemPrompt: SYSTEM_PROMPT,
-        module: 'inbox-router',
-        operation: 'classify',
-        private: true,
-        temperature: 0,
-        maxTokens: 200,
-      });
+      // Use chat() so we can override the model. The default "fast" model on
+      // the local cluster returns empty content for this prompt — same bug as
+      // summarisation. Override via INBOX_CLASSIFY_MODEL (default: 'coder').
+      raw = await llmService.chat(
+        [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: userPrompt },
+        ],
+        {
+          ...(classifyModel ? { model: classifyModel } : {}),
+          module: 'inbox-router',
+          operation: 'classify',
+          private: true,
+          temperature: 0,
+          maxTokens: 200,
+        },
+      );
     } catch (error) {
       logger?.warn({ err: error.message }, 'inbox-router LLM error');
       return { category: NEEDS_REVIEW, confidence: 0, reasoning: `LLM error: ${error.message}` };
