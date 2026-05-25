@@ -4,12 +4,12 @@ import assert from 'node:assert/strict';
 import { createInboxRouter } from '../../../src/modules/inbox/inbox-router.js';
 
 function fakeLlm(response) {
-  return { generateText: async () => response };
+  return { chat: async () => response };
 }
 
 function failingLlm(message = 'boom') {
   return {
-    generateText: async () => {
+    chat: async () => {
       throw new Error(message);
     },
   };
@@ -18,7 +18,7 @@ function failingLlm(message = 'boom') {
 describe('inbox-router hard rules', () => {
   it('voice → voz sin tocar el LLM', async () => {
     let called = false;
-    const llm = { generateText: async () => { called = true; return '{}'; } };
+    const llm = { chat: async () => { called = true; return '{}'; } };
     const router = createInboxRouter({ llmService: llm });
 
     const result = await router.classify({ origin: { kind: 'voice' } });
@@ -39,7 +39,7 @@ describe('inbox-router hard rules', () => {
 
   it('foto sin caption → foto sin tocar el LLM', async () => {
     let called = false;
-    const llm = { generateText: async () => { called = true; return '{}'; } };
+    const llm = { chat: async () => { called = true; return '{}'; } };
     const router = createInboxRouter({ llmService: llm });
 
     const result = await router.classify({
@@ -55,7 +55,7 @@ describe('inbox-router hard rules', () => {
   it('foto con caption → SÍ llama al LLM (la caption manda)', async () => {
     let called = false;
     const llm = {
-      generateText: async () => {
+      chat: async () => {
         called = true;
         return JSON.stringify({
           category: 'tarea',
@@ -77,7 +77,7 @@ describe('inbox-router hard rules', () => {
 
   it('foto con caption en blanco/espacios → trata como sin caption', async () => {
     let called = false;
-    const llm = { generateText: async () => { called = true; return '{}'; } };
+    const llm = { chat: async () => { called = true; return '{}'; } };
     const router = createInboxRouter({ llmService: llm });
 
     const result = await router.classify({

@@ -214,7 +214,11 @@ async function main() {
   // (note → notes/, descartar → marked discarded, foto/doc/voz → pending
   // downstream cards).
   const inboxStore = createInboxStore({ inboxPath: config.inbox.path, logger });
-  const inboxRouter = createInboxRouter({ llmService, logger });
+  const inboxRouter = createInboxRouter({
+    llmService,
+    classifyModel: config.inbox.classifyModel || null,
+    logger,
+  });
   const markitdownClient = config.inbox.markitdownUrl
     ? createMarkitdownClient({
         baseUrl: config.inbox.markitdownUrl,
