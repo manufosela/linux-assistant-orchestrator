@@ -129,6 +129,23 @@ describe('inbox-router LLM classification', () => {
     assert.equal(result.category, 'idea');
   });
 
+  it('mapea aliases en inglés → categoría española canónica', async () => {
+    const cases = [
+      ['document', 'documento'],
+      ['task', 'tarea'],
+      ['study', 'estudio'],
+      ['photo', 'foto'],
+      ['voice', 'voz'],
+      ['discard', 'descartar'],
+    ];
+    for (const [alias, expected] of cases) {
+      const llm = fakeLlm(`{"category":"${alias}","confidence":0.9,"reasoning":"x"}`);
+      const router = createInboxRouter({ llmService: llm });
+      const result = await router.classify({ textCaption: 'algo' });
+      assert.equal(result.category, expected, `${alias} → ${expected}`);
+    }
+  });
+
   it('respuesta inparseable → revisar', async () => {
     const llm = fakeLlm('no tengo ni idea, lo siento');
     const router = createInboxRouter({ llmService: llm });

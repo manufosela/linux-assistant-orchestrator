@@ -40,6 +40,29 @@ const CATEGORIES = Object.freeze([
   'descartar',
 ]);
 
+// Some LLMs (notably "coder") return the English variant even when the prompt
+// is in Spanish. Map common synonyms back to the canonical Spanish category.
+const CATEGORY_ALIASES = Object.freeze({
+  document: 'documento',
+  documents: 'documento',
+  task: 'tarea',
+  tasks: 'tarea',
+  todo: 'tarea',
+  study: 'estudio',
+  studies: 'estudio',
+  article: 'estudio',
+  reading: 'estudio',
+  photo: 'foto',
+  picture: 'foto',
+  image: 'foto',
+  voice: 'voz',
+  audio: 'voz',
+  recording: 'voz',
+  discard: 'descartar',
+  trash: 'descartar',
+  spam: 'descartar',
+});
+
 const NEEDS_REVIEW = 'revisar';
 
 const SYSTEM_PROMPT = [
@@ -167,7 +190,10 @@ function parseLlmResponse(raw) {
     if (typeof obj.category !== 'string') return null;
     const confidence = typeof obj.confidence === 'number' ? obj.confidence : 0;
     const reasoning = typeof obj.reasoning === 'string' ? obj.reasoning : '';
-    return { category: obj.category.toLowerCase().trim(), confidence, reasoning };
+    const rawCategory = obj.category.toLowerCase().trim();
+    // Map English/synonym variants back to the canonical Spanish category.
+    const category = CATEGORY_ALIASES[rawCategory] ?? rawCategory;
+    return { category, confidence, reasoning };
   } catch {
     return null;
   }
