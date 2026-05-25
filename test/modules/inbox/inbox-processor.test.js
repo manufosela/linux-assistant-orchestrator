@@ -238,7 +238,7 @@ describe('inbox-processor — documento/estudio (Markitdown)', () => {
     assert.equal(called, false);
   });
 
-  it('markitdown falla → graceful fallback, no marca error, queda pending', async () => {
+  it('markitdown falla + sin Drive → graceful fallback (pending), no marca error', async () => {
     const item = makeItem({ fileName: 'foo.pdf' });
     await seedMeta(item);
     await writeFile(join(item.dir, 'foo.pdf'), 'PDF');
@@ -252,10 +252,10 @@ describe('inbox-processor — documento/estudio (Markitdown)', () => {
 
     const result = await proc.processItem(item);
 
-    assert.equal(result.action.kind, 'documento-extract-failed');
-    assert.equal(store.calls.markError.length, 0); // sin markError, solo log
+    // Markitdown falló pero sin Drive configurado: queda pending genérico.
+    assert.equal(result.action.kind, 'pending-documento');
+    assert.equal(store.calls.markError.length, 0);
     assert.equal(store.calls.markRouted.length, 0);
-    assert.match(result.action.message, /sidecar 500/);
   });
 });
 
@@ -293,7 +293,9 @@ describe('inbox-processor — foto con OCR (TSK-0053)', () => {
 
     const result = await proc.processItem(item);
 
-    assert.equal(result.action.kind, 'extracted-foto-as-documento');
+    // Sin driveClient configurado: queda como extracted-documento, no uploaded
+    assert.equal(result.action.kind, 'extracted-documento');
+    assert.match(result.action.message, /reclasificado desde foto/);
     const meta = JSON.parse(await readFile(join(item.dir, 'meta.json'), 'utf8'));
     assert.equal(meta.classification.category, 'documento');
     assert.equal(meta.classification.overriddenFrom, 'foto');
@@ -358,7 +360,7 @@ describe('inbox-processor — foto con OCR (TSK-0053)', () => {
 
     assert.equal(result.action.kind, 'pending-foto');
     assert.equal(store.calls.markError.length, 0);
-    assert.match(result.action.message, /tesseract crashed/);
+    assert.match(result.action.message, /OCR falló.*tesseract crashed/);
   });
 
   it('foto sin fileName → pending sin tocar markitdown', async () => {
@@ -376,6 +378,137 @@ describe('inbox-processor — foto con OCR (TSK-0053)', () => {
 
     assert.equal(result.action.kind, 'pending-foto');
     assert.equal(called, false);
+  });
+});
+
+describe('inbox-processor — subida a Drive (TSK-0049)', () => {
+  function fakeDrive(uploadResult = null) {
+    const calls = [];
+    return {
+      calls,
+      uploadFile: async (path, opts) => {
+        calls.push({ path, opts });
+        return uploadResult ?? {
+          id: 'drive-id-' + calls.length,
+          name: opts.name,
+          webViewLink: `https://drive.google.com/file/d/drive-id-${calls.length}/view`,
+          mimeType: opts.mimeType,
+          parents: [opts.folderId],
+        };
+      },
+    };
+  }
+
+  function fakeMd(text = '# doc\n\ntexto extraído') {
+    return { convertFile: async () => ({ text, title: 'T', filename: 'foo.pdf' }) };
+  }
+
+  it('documento + markitdown OK + Drive configurado → sube original + extracted, markRouted', async () => {
+    const item = makeItem({ kind: 'document', fileName: 'foo.pdf' });
+    await seedMeta(item);
+    await writeFile(join(item.dir, 'foo.pdf'), 'PDF');
+    const router = fakeRouter({ category: 'documento', confidence: 0.9, reasoning: 'PDF' });
+    const store = fakeInboxStore();
+    const drive = fakeDrive();
+    const proc = createInboxProcessor({
+      router, inboxStore: store, notesPath: notesDir,
+      markitdownClient: fakeMd(),
+      driveClient: drive, driveInboxFolderId: 'FOLDER123',
+      now: () => fixedDate,
+    });
+
+    const result = await proc.processItem(item);
+
+    assert.equal(result.action.kind, 'uploaded-documento');
+    assert.equal(store.calls.markRouted.length, 1);
+    assert.match(store.calls.markRouted[0].routedTo, /^drive:/);
+    assert.equal(drive.calls.length, 2); // original + extracted.md
+    assert.equal(drive.calls[0].opts.folderId, 'FOLDER123');
+    assert.equal(drive.calls[0].opts.name, 'foo.pdf');
+    assert.match(drive.calls[1].opts.name, /-extracted\.md$/);
+    const meta = JSON.parse(await readFile(join(item.dir, 'meta.json'), 'utf8'));
+    assert.equal(meta.drive.uploads.length, 2);
+  });
+
+  it('foto con OCR >50 + Drive → reclasificada a documento, sube imagen + extracted', async () => {
+    const item = makeItem({ kind: 'photo', fileName: 'pic.jpg' });
+    await seedMeta(item);
+    await writeFile(join(item.dir, 'pic.jpg'), 'JPG');
+    const longText = Array.from({ length: 80 }, (_, i) => `w${i}`).join(' ');
+    const drive = fakeDrive();
+    const proc = createInboxProcessor({
+      router: fakeRouter({ category: 'foto', confidence: 1, reasoning: 'r' }),
+      inboxStore: fakeInboxStore(), notesPath: notesDir,
+      markitdownClient: fakeMd(longText),
+      driveClient: drive, driveInboxFolderId: 'F',
+      now: () => fixedDate,
+    });
+
+    const result = await proc.processItem(item);
+
+    assert.equal(result.action.kind, 'uploaded-documento');
+    assert.match(result.action.message, /reclasificado desde foto/);
+    assert.equal(drive.calls.length, 2);
+  });
+
+  it('foto sin OCR (texto corto) + Drive → sube solo la imagen como foto', async () => {
+    const item = makeItem({ kind: 'photo', fileName: 'sunset.jpg' });
+    await seedMeta(item);
+    await writeFile(join(item.dir, 'sunset.jpg'), 'JPG');
+    const drive = fakeDrive();
+    const proc = createInboxProcessor({
+      router: fakeRouter({ category: 'foto', confidence: 1, reasoning: 'r' }),
+      inboxStore: fakeInboxStore(), notesPath: notesDir,
+      markitdownClient: fakeMd('cuatro palabras solamente aqui'),
+      driveClient: drive, driveInboxFolderId: 'F',
+      now: () => fixedDate,
+    });
+
+    const result = await proc.processItem(item);
+
+    assert.equal(result.action.kind, 'uploaded-foto');
+    assert.equal(drive.calls.length, 1);
+    assert.equal(drive.calls[0].opts.name, 'sunset.jpg');
+  });
+
+  it('Drive sin configurar → mantiene comportamiento previo (extracted/pending)', async () => {
+    const item = makeItem({ kind: 'document', fileName: 'foo.pdf' });
+    await seedMeta(item);
+    await writeFile(join(item.dir, 'foo.pdf'), 'PDF');
+    const proc = createInboxProcessor({
+      router: fakeRouter({ category: 'documento', confidence: 0.9, reasoning: 'r' }),
+      inboxStore: fakeInboxStore(), notesPath: notesDir,
+      markitdownClient: fakeMd(),
+      driveClient: null, driveInboxFolderId: null,
+      now: () => fixedDate,
+    });
+
+    const result = await proc.processItem(item);
+
+    assert.equal(result.action.kind, 'extracted-documento');
+    assert.match(result.action.message, /pendiente Drive/);
+  });
+
+  it('Drive falla (404, auth, etc.) → kind=upload-failed, queda pending', async () => {
+    const item = makeItem({ kind: 'document', fileName: 'foo.pdf' });
+    await seedMeta(item);
+    await writeFile(join(item.dir, 'foo.pdf'), 'PDF');
+    const drive = { uploadFile: async () => { throw new Error('Drive 403 forbidden'); } };
+    const store = fakeInboxStore();
+    const proc = createInboxProcessor({
+      router: fakeRouter({ category: 'documento', confidence: 0.9, reasoning: 'r' }),
+      inboxStore: store, notesPath: notesDir,
+      markitdownClient: fakeMd(),
+      driveClient: drive, driveInboxFolderId: 'F',
+      now: () => fixedDate,
+    });
+
+    const result = await proc.processItem(item);
+
+    assert.equal(result.action.kind, 'documento-upload-failed');
+    assert.equal(store.calls.markRouted.length, 0);
+    assert.equal(store.calls.markError.length, 0); // graceful, no error mark
+    assert.match(result.action.message, /Drive falló.*403/);
   });
 });
 

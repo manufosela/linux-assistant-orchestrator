@@ -1,3 +1,5 @@
+import { createReadStream } from 'node:fs';
+import { basename } from 'node:path';
 import { google } from 'googleapis';
 
 /**
@@ -84,7 +86,39 @@ export function createGoogleDriveClient({ googleAuth, logger, driveFactory }) {
     return toDriveItem(response.data);
   }
 
-  return { listFolder, searchByName, getMetadata };
+  /**
+   * Uploads a local file to a Drive folder. Uses the `drive.file` scope so it
+   * can only see/manage files created by this app — never the rest of the
+   * user's Drive.
+   *
+   * @param {string} filePath  Absolute path of the file to upload.
+   * @param {{ folderId: string, mimeType?: string, name?: string }} options
+   * @returns {Promise<DriveItem>}
+   */
+  async function uploadFile(filePath, { folderId, mimeType, name } = {}) {
+    if (!filePath) throw new Error('uploadFile requires filePath');
+    if (!folderId) throw new Error('uploadFile requires folderId');
+    const drive = await client();
+    const fileName = name || basename(filePath);
+    const response = await drive.files.create({
+      requestBody: {
+        name: fileName,
+        parents: [folderId],
+      },
+      media: {
+        mimeType: mimeType || 'application/octet-stream',
+        body: createReadStream(filePath),
+      },
+      fields: 'id, name, mimeType, modifiedTime, size, parents, webViewLink',
+    });
+    logger?.info(
+      { fileId: response.data.id, name: fileName, folderId },
+      'drive.uploadFile',
+    );
+    return toDriveItem(response.data);
+  }
+
+  return { listFolder, searchByName, getMetadata, uploadFile };
 }
 
 /**
@@ -123,4 +157,5 @@ function toDriveItem(raw) {
  * @property {(folderId?: string, options?: { pageSize?: number }) => Promise<DriveItem[]>} listFolder
  * @property {(query: string, options?: { pageSize?: number }) => Promise<DriveItem[]>} searchByName
  * @property {(fileId: string) => Promise<DriveItem>} getMetadata
+ * @property {(filePath: string, options: { folderId: string, mimeType?: string, name?: string }) => Promise<DriveItem>} uploadFile
  */
