@@ -41,7 +41,16 @@ import { join } from 'node:path';
  */
 const OCR_THRESHOLD_WORDS = 50;
 
-export function createInboxProcessor({ router, inboxStore, notesPath, markitdownClient = null, logger, now = () => new Date() }) {
+export function createInboxProcessor({
+  router,
+  inboxStore,
+  notesPath,
+  markitdownClient = null,
+  driveClient = null,
+  driveInboxFolderId = null,
+  logger,
+  now = () => new Date(),
+}) {
   if (!router) throw new Error('createInboxProcessor requires router');
   if (!inboxStore) throw new Error('createInboxProcessor requires inboxStore');
   if (!notesPath) throw new Error('createInboxProcessor requires notesPath');
@@ -127,61 +136,41 @@ export function createInboxProcessor({ router, inboxStore, notesPath, markitdown
    * the photo as a 'documento' instead.
    */
   async function processPhoto(itemRef) {
-    if (!markitdownClient || !itemRef.meta.fileName) {
-      return {
-        kind: 'pending-foto',
-        markRouted: false,
-        message: 'pendiente subida a Drive (TSK-0049)',
-      };
-    }
-    const filePath = join(itemRef.dir, itemRef.meta.fileName);
-    let ocr;
-    try {
-      ocr = await markitdownClient.convertFile(filePath);
-    } catch (error) {
-      logger?.warn({ id: itemRef.id, err: error.message }, 'OCR on photo failed');
-      return {
-        kind: 'pending-foto',
-        markRouted: false,
-        message: `OCR falló (${error.message.slice(0, 60)}) — pendiente Drive`,
-      };
+    let extractInfo = null;
+    let reclassified = false;
+    let ocrAttempt = null;
+    let ocrError = null;
+
+    if (markitdownClient && itemRef.meta.fileName) {
+      const filePath = join(itemRef.dir, itemRef.meta.fileName);
+      try {
+        const ocr = await markitdownClient.convertFile(filePath);
+        const words = (ocr.text ?? '').split(/\s+/).filter(Boolean).length;
+        if (words >= OCR_THRESHOLD_WORDS) {
+          const extractedPath = join(itemRef.dir, 'extracted.md');
+          await writeFile(extractedPath, ocr.text, 'utf8');
+          await annotateExtraction(itemRef, {
+            path: extractedPath, words, title: ocr.title ?? null, source: 'ocr',
+          });
+          await overrideCategory(itemRef, 'documento',
+            `OCR detectó ${words} palabras → reclasificado desde foto`);
+          extractInfo = { words, title: ocr.title ?? null };
+          reclassified = true;
+        } else {
+          await annotateExtraction(itemRef, {
+            path: null, words, title: ocr.title ?? null, source: 'ocr-no-text',
+          });
+          ocrAttempt = { words };
+        }
+      } catch (error) {
+        logger?.warn({ id: itemRef.id, err: error.message }, 'OCR on photo failed');
+        ocrError = error.message;
+      }
     }
 
-    const words = (ocr.text ?? '').split(/\s+/).filter(Boolean).length;
-    if (words < OCR_THRESHOLD_WORDS) {
-      // Not enough text to consider it a document. Annotate the attempt so we
-      // don't retry, but stay as a plain photo.
-      await annotateExtraction(itemRef, {
-        path: null,
-        words,
-        title: ocr.title ?? null,
-        source: 'ocr-no-text',
-      });
-      return {
-        kind: 'pending-foto',
-        markRouted: false,
-        message: words > 0
-          ? `foto (OCR: solo ${words} palabras, sin contenido suficiente) — pendiente Drive`
-          : 'foto (sin texto OCR) — pendiente Drive',
-      };
-    }
-
-    // Substantial OCR text — reclassify as documento.
-    const extractedPath = join(itemRef.dir, 'extracted.md');
-    await writeFile(extractedPath, ocr.text, 'utf8');
-    await annotateExtraction(itemRef, {
-      path: extractedPath,
-      words,
-      title: ocr.title ?? null,
-      source: 'ocr',
-    });
-    await overrideCategory(itemRef, 'documento', `OCR detectó ${words} palabras → reclasificado desde foto`);
-    const titleSuffix = ocr.title ? `, "${ocr.title}"` : '';
-    return {
-      kind: 'extracted-foto-as-documento',
-      markRouted: false,
-      message: `OCR detectó ${words} palabras${titleSuffix} → reclasificado como documento — pendiente Drive`,
-    };
+    const finalCategory = reclassified ? 'documento' : 'foto';
+    const driveResult = await tryDriveUpload(itemRef, { hasExtracted: !!extractInfo });
+    return buildResult(finalCategory, extractInfo, driveResult, { reclassified, ocrAttempt, ocrError });
   }
 
   async function overrideCategory(itemRef, newCategory, reasonAddendum) {
@@ -206,35 +195,142 @@ export function createInboxProcessor({ router, inboxStore, notesPath, markitdown
   }
 
   async function extractDocument(itemRef, category) {
-    if (!markitdownClient || !itemRef.meta.fileName) {
+    let extractInfo = null;
+
+    if (markitdownClient && itemRef.meta.fileName) {
+      const filePath = join(itemRef.dir, itemRef.meta.fileName);
+      try {
+        const { text, title } = await markitdownClient.convertFile(filePath);
+        const extractedPath = join(itemRef.dir, 'extracted.md');
+        await writeFile(extractedPath, text ?? '', 'utf8');
+        const words = (text ?? '').split(/\s+/).filter(Boolean).length;
+        await annotateExtraction(itemRef, { path: extractedPath, words, title: title ?? null });
+        extractInfo = { words, title: title ?? null };
+      } catch (error) {
+        logger?.warn({ id: itemRef.id, err: error.message }, 'markitdown extract failed');
+      }
+    }
+
+    const driveResult = await tryDriveUpload(itemRef, { hasExtracted: !!extractInfo });
+    return buildResult(category, extractInfo, driveResult);
+  }
+
+  /**
+   * Builds the action result combining extraction info and Drive upload outcome.
+   * Centralises the "uploaded / extracted / pending / failed" message logic so
+   * processPhoto and extractDocument stay focused on their own flow.
+   */
+  function buildResult(category, extractInfo, driveResult, { reclassified = false, ocrAttempt = null, ocrError = null } = {}) {
+    const extractText = extractInfo
+      ? `extraído (${extractInfo.words} palabras${extractInfo.title ? `, "${extractInfo.title}"` : ''})`
+      : null;
+    const reclassifiedText = reclassified ? ' → reclasificado desde foto' : '';
+
+    if (driveResult.uploaded) {
+      const prefix = extractText ? `${extractText}${reclassifiedText} y ` : '';
       return {
-        kind: `pending-${category}`,
-        markRouted: false,
-        message: 'pendiente subida a Drive (TSK-0049)',
+        kind: `uploaded-${category}`,
+        markRouted: true,
+        routedTo: driveResult.routedTo,
+        message: `${category} ${prefix}subido a Drive`,
       };
     }
-    const filePath = join(itemRef.dir, itemRef.meta.fileName);
-    try {
-      const { text, title } = await markitdownClient.convertFile(filePath);
-      const extractedPath = join(itemRef.dir, 'extracted.md');
-      await writeFile(extractedPath, text ?? '', 'utf8');
-      const words = (text ?? '').split(/\s+/).filter(Boolean).length;
-      await annotateExtraction(itemRef, { path: extractedPath, words, title: title ?? null });
-      const titleSuffix = title ? `, "${title}"` : '';
+    if (driveResult.error) {
+      return {
+        kind: `${category}-upload-failed`,
+        markRouted: false,
+        message: `${category}${extractText ? ` ${extractText}` : ''}${reclassifiedText} — Drive falló: ${driveResult.error}`,
+      };
+    }
+    // Drive skipped (not configured or nothing uploadable)
+    if (extractInfo) {
       return {
         kind: `extracted-${category}`,
         markRouted: false,
-        message: `${category} extraído (${words} palabras${titleSuffix}) — pendiente Drive`,
-      };
-    } catch (error) {
-      // Graceful fallback: the item is safe in the inbox, just no extraction.
-      logger?.warn({ id: itemRef.id, err: error.message }, 'markitdown extract failed');
-      return {
-        kind: `${category}-extract-failed`,
-        markRouted: false,
-        message: `extracción falló (${error.message.slice(0, 80)}) — pendiente Drive`,
+        message: `${category} ${extractText}${reclassifiedText} — pendiente Drive`,
       };
     }
+    // No extraction. For photos, report what the OCR attempt found (if any).
+    if (category === 'foto') {
+      let message;
+      if (ocrError) {
+        message = `OCR falló (${ocrError.slice(0, 60)}) — pendiente Drive`;
+      } else if (ocrAttempt) {
+        message = ocrAttempt.words > 0
+          ? `foto (OCR: solo ${ocrAttempt.words} palabras, sin contenido suficiente) — pendiente Drive`
+          : 'foto (sin texto OCR) — pendiente Drive';
+      } else {
+        message = 'pendiente subida a Drive (TSK-0049)';
+      }
+      return { kind: 'pending-foto', markRouted: false, message };
+    }
+    return {
+      kind: `pending-${category}`,
+      markRouted: false,
+      message: 'pendiente subida a Drive (TSK-0049)',
+    };
+  }
+
+  /**
+   * Uploads original + (optional) extracted.md to the configured Drive folder.
+   *
+   * Returns one of:
+   *   { uploaded: true, routedTo: 'drive:<id>', webViewLink, uploads }
+   *   { uploaded: false, error: 'reason' }     // intentamos pero falló
+   *   { uploaded: false, skipped: true }        // no configurado o nada que subir
+   */
+  async function tryDriveUpload(itemRef, { hasExtracted = false } = {}) {
+    if (!driveClient || !driveInboxFolderId) {
+      return { uploaded: false, skipped: true };
+    }
+    const uploads = [];
+    try {
+      if (itemRef.meta.fileName) {
+        const u = await driveClient.uploadFile(
+          join(itemRef.dir, itemRef.meta.fileName),
+          {
+            folderId: driveInboxFolderId,
+            mimeType: itemRef.meta.mimeType ?? undefined,
+            name: itemRef.meta.fileName,
+          },
+        );
+        uploads.push({ kind: 'original', fileId: u.id, webViewLink: u.webViewLink, name: u.name });
+      }
+      if (hasExtracted) {
+        const u = await driveClient.uploadFile(
+          join(itemRef.dir, 'extracted.md'),
+          {
+            folderId: driveInboxFolderId,
+            mimeType: 'text/markdown',
+            name: `${itemRef.id.slice(0, 8)}-extracted.md`,
+          },
+        );
+        uploads.push({ kind: 'extracted', fileId: u.id, webViewLink: u.webViewLink, name: u.name });
+      }
+      if (uploads.length === 0) return { uploaded: false, skipped: true };
+      await annotateDrive(itemRef, uploads);
+      return {
+        uploaded: true,
+        routedTo: `drive:${uploads[0].fileId}`,
+        webViewLink: uploads[0].webViewLink,
+        uploads,
+      };
+    } catch (error) {
+      logger?.warn({ id: itemRef.id, err: error.message }, 'drive upload failed');
+      return { uploaded: false, error: error.message.slice(0, 100) };
+    }
+  }
+
+  async function annotateDrive(itemRef, uploads) {
+    const metaPath = join(itemRef.dir, 'meta.json');
+    let current;
+    try {
+      current = JSON.parse(await readFile(metaPath, 'utf8'));
+    } catch {
+      current = itemRef.meta;
+    }
+    const next = { ...current, drive: { uploads, at: now().toISOString() } };
+    await writeFile(metaPath, JSON.stringify(next, null, 2), 'utf8');
   }
 
   async function annotateExtraction(itemRef, extraction) {

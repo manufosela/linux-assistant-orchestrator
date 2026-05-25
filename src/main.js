@@ -230,8 +230,13 @@ async function main() {
     inboxStore,
     notesPath: config.inbox.notesPath,
     markitdownClient,
+    driveClient: config.inbox.driveFolderId ? driveClient : null,
+    driveInboxFolderId: config.inbox.driveFolderId || null,
     logger,
   });
+  if (!config.inbox.driveFolderId) {
+    logger.info('Drive upload disabled (set DRIVE_INBOX_FOLDER_ID to enable)');
+  }
   // URL capture has its own flow: urlFetcher already extracts text + title,
   // so we skip the router/markitdown and store the result directly.
   const urlCapture = createUrlCapture({ urlFetcher, inboxStore, logger });

@@ -108,6 +108,9 @@ export function loadConfig(envPath = '.env') {
       // empty content on the local cluster — override with a model that works
       // for Spanish prose summarisation. Empty string = use the default.
       summariseModel: process.env.INBOX_SUMMARISE_MODEL ?? 'coder',
+      // Drive folder ID where the processor uploads documents/photos/studies
+      // when they finish (TSK-0049). Empty string = Drive upload disabled.
+      driveFolderId: process.env.DRIVE_INBOX_FOLDER_ID ?? '',
     },
 
     llm: {
@@ -217,7 +220,7 @@ function validateConfig(config) {
  * @property {{ enabled: boolean, n2Ip: string, n3Ip: string, n4Ip: string, historyPath: string }} cluster
  * @property {{ enabled: boolean, baseUrl: string, timeoutMs: number }} prometheus
  * @property {{ watchPath: string, rulesPath: string, enableLlmClassification: boolean }} downloads
- * @property {{ path: string, notesPath: string, markitdownUrl: string, markitdownTimeoutMs: number, summariseModel: string }} inbox
+ * @property {{ path: string, notesPath: string, markitdownUrl: string, markitdownTimeoutMs: number, summariseModel: string, driveFolderId: string }} inbox
  * @property {import('../../types/llm.js').LlmConfig} llm
  * @property {{ provider: string, readOnly: boolean }} email
  * @property {{ provider: string, readOnly: boolean }} calendar

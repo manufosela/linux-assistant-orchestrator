@@ -6,6 +6,10 @@ const SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/calendar.readonly',
   'https://www.googleapis.com/auth/drive.readonly',
+  // drive.file: app puede crear/leer/modificar/borrar SOLO los ficheros que
+  // ella misma haya creado o que el usuario haya abierto explícitamente con la
+  // app. NO toca el resto del Drive del usuario.
+  'https://www.googleapis.com/auth/drive.file',
 ];
 
 /**
