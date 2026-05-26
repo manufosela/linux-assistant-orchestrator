@@ -34,6 +34,10 @@ import { createGoogleAuth } from './modules/google/google-auth.js';
 import { createGmailClient } from './modules/email/gmail-client.js';
 import { createGoogleCalendarClient } from './modules/calendar/google-calendar-client.js';
 import { createGoogleDriveClient } from './modules/drive/google-drive-client.js';
+import { createWhisperClient } from './modules/whisper/whisper-client.js';
+import { createYoutubeSubtitleFetcher } from './modules/youtube/youtube-subtitle-fetcher.js';
+import { createYoutubeAudioFetcher } from './modules/youtube/youtube-audio-fetcher.js';
+import { createYoutubeService } from './modules/youtube/youtube-service.js';
 import { createInboxStore } from './modules/inbox/inbox-store.js';
 import { createInboxRouter } from './modules/inbox/inbox-router.js';
 import { createInboxProcessor } from './modules/inbox/inbox-processor.js';
@@ -208,6 +212,35 @@ async function main() {
     driveClient = createGoogleDriveClient({ googleAuth, logger });
   }
 
+  // YouTube transcription pipeline (subs → audio → whisper → llm summary).
+  // Solo se activa si hay endpoint Whisper configurado; sin él la slow-path
+  // (vídeos sin subtítulos) no funciona y preferimos no exponer /youtube a medias.
+  const youtubeService = config.whisper.baseUrl
+    ? createYoutubeService({
+        subtitleFetcher: createYoutubeSubtitleFetcher({
+          ytdlpBin: config.youtube.ytdlpBin,
+          timeoutMs: config.youtube.subtitleTimeoutMs,
+          logger,
+        }),
+        audioFetcher: createYoutubeAudioFetcher({
+          ytdlpBin: config.youtube.ytdlpBin,
+          timeoutMs: config.youtube.audioTimeoutMs,
+          logger,
+        }),
+        whisperClient: createWhisperClient({
+          baseUrl: config.whisper.baseUrl,
+          model: config.whisper.model,
+          apiKey: config.whisper.apiKey,
+          timeoutMs: config.whisper.timeoutMs,
+          logger,
+        }),
+        llmService,
+        defaultLanguage: config.youtube.defaultLanguage,
+        summaryChunkChars: config.youtube.summaryChunkChars,
+        logger,
+      })
+    : undefined;
+
   // Inbox: storage + classifier + dispatcher. Telegram inbound items
   // (documents, photos, voice, audio, video) land in the store, get classified
   // by the LLM-backed router, and dispatched to the matching action
@@ -287,6 +320,7 @@ async function main() {
       urlCapture,
       inboxQuery,
       inboxReader,
+      youtubeService,
       router,
       logger,
     });
