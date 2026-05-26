@@ -63,6 +63,14 @@ Docker Compose. See the full variable reference in section 6.
 ### Web search (`WEB_SEARCH_BASE_URL`, optional)
 - A self-hosted **SearXNG** base URL, e.g. `http://<ip>:8888`.
 
+### YouTube + Whisper (optional)
+- `luis youtube <url>` (CLI) and `/youtube <url>` (Telegram) need:
+  - `yt-dlp` + `ffmpeg` in the runtime image (already in the Dockerfile).
+  - `WHISPER_BASE_URL` pointing at an OpenAI-compatible `/v1/audio/transcriptions` endpoint
+    (e.g. LiteLLM with whisper.cpp at `http://<litellm-host>:8080`).
+- Without `WHISPER_BASE_URL` the command answers "not configured" and the rest of the bot keeps working.
+- See the `WHISPER_*` and `YOUTUBE_*` variables in the reference table below.
+
 ## 5. Build and run
 
 ```bash
@@ -108,6 +116,15 @@ is enabled, `Cluster watcher started`.
 | `PROMETHEUS_ENABLED` | no | `false` | Enable on-demand "is anything down?" checks |
 | `PROMETHEUS_BASE_URL` | if prometheus | — | Prometheus base URL, e.g. `http://<ip>:9090` |
 | `PROMETHEUS_TIMEOUT_MS` | no | `8000` | Prometheus query timeout |
+| `WHISPER_BASE_URL` | for /youtube | — | OpenAI-compatible Whisper endpoint, e.g. `http://<litellm-host>:8080` |
+| `WHISPER_MODEL` | no | `whisper-1` | Whisper model name |
+| `WHISPER_API_KEY` | no | — | Only if the endpoint requires auth |
+| `WHISPER_TIMEOUT_MS` | no | `600000` | Per-request timeout (10 min default for long audios) |
+| `YOUTUBE_YTDLP_BIN` | no | `yt-dlp` | Path/name of the yt-dlp binary |
+| `YOUTUBE_DEFAULT_LANGUAGE` | no | `es` | Preferred subtitle language; falls back to `en` |
+| `YOUTUBE_SUMMARY_CHUNK_CHARS` | no | `8000` | Chunk size threshold for long-transcript summaries |
+| `YOUTUBE_SUBTITLE_TIMEOUT_MS` | no | `60000` | yt-dlp subtitle fetch timeout |
+| `YOUTUBE_AUDIO_TIMEOUT_MS` | no | `600000` | yt-dlp audio extraction timeout (10 min for long videos) |
 | `CONTAINER_NAME` | no | `luis` | Docker container name |
 
 When `CLUSTER_ENABLED=true`, the three `CLUSTER_N*_IP` values are **required**;
