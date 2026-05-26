@@ -24,6 +24,10 @@ import { createClusterStatusService } from '../../../modules/cluster/cluster-sta
 import { createGmailClient } from '../../../modules/email/gmail-client.js';
 import { createGoogleCalendarClient } from '../../../modules/calendar/google-calendar-client.js';
 import { createGoogleDriveClient } from '../../../modules/drive/google-drive-client.js';
+import { createWhisperClient } from '../../../modules/whisper/whisper-client.js';
+import { createYoutubeSubtitleFetcher } from '../../../modules/youtube/youtube-subtitle-fetcher.js';
+import { createYoutubeAudioFetcher } from '../../../modules/youtube/youtube-audio-fetcher.js';
+import { createYoutubeService } from '../../../modules/youtube/youtube-service.js';
 import { createCliApp } from '../create-cli-app.js';
 import { loadUserConfig } from '../user-config-loader.js';
 
@@ -156,6 +160,35 @@ async function main() {
     historyStore: createClusterHistoryStore({ filePath: config.cluster.historyPath, logger }),
   });
 
+  // YouTube transcription: solo se activa si hay endpoint Whisper configurado.
+  // Sin Whisper, la slow-path (vídeos sin subtítulos) no funciona y preferimos
+  // no exponer el comando a medias.
+  const youtubeService = config.whisper.baseUrl
+    ? createYoutubeService({
+        subtitleFetcher: createYoutubeSubtitleFetcher({
+          ytdlpBin: config.youtube.ytdlpBin,
+          timeoutMs: config.youtube.subtitleTimeoutMs,
+          logger,
+        }),
+        audioFetcher: createYoutubeAudioFetcher({
+          ytdlpBin: config.youtube.ytdlpBin,
+          timeoutMs: config.youtube.audioTimeoutMs,
+          logger,
+        }),
+        whisperClient: createWhisperClient({
+          baseUrl: config.whisper.baseUrl,
+          model: config.whisper.model,
+          apiKey: config.whisper.apiKey,
+          timeoutMs: config.whisper.timeoutMs,
+          logger,
+        }),
+        llmService,
+        defaultLanguage: config.youtube.defaultLanguage,
+        summaryChunkChars: config.youtube.summaryChunkChars,
+        logger,
+      })
+    : undefined;
+
   const app = createCliApp({
     llmService,
     statusService,
@@ -170,6 +203,7 @@ async function main() {
     gmailClient,
     calendarClient,
     driveClient,
+    youtubeService,
     logger,
     appName: APP_NAME,
     appVersion: pkg.version,

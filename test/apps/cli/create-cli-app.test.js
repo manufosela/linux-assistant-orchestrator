@@ -81,6 +81,7 @@ function makeApp(overrides = {}) {
     alexaAnnouncer: undefined,
     googleAuth: undefined,
     gmailClient: undefined,
+    youtubeService: undefined,
     remoteCodeTasksEnabled: false,
   };
 
@@ -97,6 +98,7 @@ function makeApp(overrides = {}) {
     alexaAnnouncer: services.alexaAnnouncer,
     googleAuth: services.googleAuth,
     gmailClient: services.gmailClient,
+    youtubeService: services.youtubeService,
     logger,
     appName: 'assistant',
     appVersion: 'test',
@@ -454,5 +456,77 @@ describe('create-cli-app — command routing', () => {
 
     assert.equal(exit, 1);
     assert.ok(renderer._errors.some((line) => line.toLowerCase().includes('not configured')));
+  });
+
+  it('"luis youtube <url>" prints title, source and summary', async () => {
+    let captured = null;
+    const { app, renderer } = makeApp({
+      youtubeService: {
+        processVideo: async (url, opts) => {
+          captured = { url, opts };
+          return {
+            videoId: 'abc',
+            title: 'Mi vídeo',
+            lang: 'es',
+            durationSec: 60,
+            source: 'subtitles',
+            transcript: 'transcripción completa',
+            summary: 'resumen breve',
+          };
+        },
+      },
+    });
+
+    const exit = await app.runCommand(['youtube', 'https://youtu.be/abc']);
+
+    assert.equal(exit, undefined ?? 0);
+    assert.equal(captured.url, 'https://youtu.be/abc');
+    assert.equal(captured.opts.withSummary, true);
+    assert.ok(renderer._output.some((line) => line.includes('Mi vídeo')));
+    assert.ok(renderer._output.some((line) => line.includes('subtítulos')));
+    assert.ok(renderer._output.some((line) => line.includes('resumen breve')));
+  });
+
+  it('"luis youtube <url> --no-summary" no llama summary y muestra transcript completo', async () => {
+    let capturedOpts = null;
+    const { app, renderer } = makeApp({
+      youtubeService: {
+        processVideo: async (_url, opts) => {
+          capturedOpts = opts;
+          return {
+            videoId: 'abc', title: 'T', lang: 'es', durationSec: 60,
+            source: 'subtitles', transcript: 'TRANSCRIPT', summary: null,
+          };
+        },
+      },
+    });
+
+    await app.runCommand(['youtube', 'https://youtu.be/abc', '--no-summary']);
+
+    assert.equal(capturedOpts.withSummary, false);
+    assert.ok(renderer._output.some((line) => line.includes('TRANSCRIPT')));
+  });
+
+  it('"luis youtube" sin URL → exit 1 con usage hint', async () => {
+    const { app, renderer } = makeApp();
+    const exit = await app.runCommand(['youtube']);
+    assert.equal(exit, 1);
+    assert.ok(renderer._errors.some((line) => line.toLowerCase().includes('usage')));
+  });
+
+  it('"luis youtube" sin service configurado → exit 1', async () => {
+    const { app, renderer } = makeApp({ youtubeService: undefined });
+    const exit = await app.runCommand(['youtube', 'https://youtu.be/abc']);
+    assert.equal(exit, 1);
+    assert.ok(renderer._errors.some((line) => line.toLowerCase().includes('not configured')));
+  });
+
+  it('"luis youtube" propaga error si el service falla', async () => {
+    const { app, renderer } = makeApp({
+      youtubeService: { processVideo: async () => { throw new Error('boom'); } },
+    });
+    const exit = await app.runCommand(['youtube', 'https://youtu.be/abc']);
+    assert.equal(exit, 1);
+    assert.ok(renderer._errors.some((line) => line.toLowerCase().includes('boom')));
   });
 });
