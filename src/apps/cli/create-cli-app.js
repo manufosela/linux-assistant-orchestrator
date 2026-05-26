@@ -20,6 +20,7 @@ import { formatClusterStatus, formatClusterHistory } from '../../modules/cluster
  *   urlFetcher?: import('../../modules/web/url-fetcher.js').UrlFetcher,
  *   webSearch?: import('../../modules/web/web-search.js').WebSearchService,
  *   homeAssistant?: import('../../modules/home-assistant/ha-client.js').HomeAssistantClient,
+ *   youtubeService?: import('../../modules/youtube/youtube-service.js').YoutubeService,
  *   logger: import('pino').Logger,
  *   appName: string,
  *   appVersion: string,
@@ -83,7 +84,7 @@ export function createCliApp(deps) {
  * }} deps
  */
 function registerCommands(deps) {
-  const { router, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, googleAuth, clusterStatus, gmailClient, calendarClient, driveClient, logger, remoteCodeTasksEnabled } = deps;
+  const { router, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, googleAuth, clusterStatus, gmailClient, calendarClient, driveClient, youtubeService, logger, remoteCodeTasksEnabled } = deps;
 
   router.register('status', async ({ renderer }) => {
     const status = statusService.getStatus();
@@ -285,6 +286,40 @@ function registerCommands(deps) {
       return { exitCode: 1 };
     }
   }, { description: 'Download a URL and print its extracted text' });
+
+  router.register('youtube', async ({ args, flags, renderer }) => {
+    const url = args[0];
+    if (!url) {
+      renderer.error('Usage: luis youtube <url> [--full] [--no-summary] [--lang=es]');
+      return { exitCode: 1 };
+    }
+    if (!youtubeService) {
+      renderer.error('YouTube transcription is not configured. Set WHISPER_BASE_URL and run with yt-dlp available.');
+      return { exitCode: 1 };
+    }
+    const withSummary = flags['no-summary'] !== true && flags.summary !== 'false';
+    const language = typeof flags.lang === 'string' ? flags.lang : undefined;
+    try {
+      const result = await youtubeService.processVideo(url, { withSummary, language });
+      if (result.title) renderer.print(`# ${result.title}`);
+      const sourceLabel = result.source === 'subtitles' ? 'subtítulos' : 'whisper';
+      renderer.info(`Fuente: ${sourceLabel}${result.videoId ? ` · ${result.videoId}` : ''}`);
+      renderer.print('');
+      if (result.summary) {
+        renderer.print('## Resumen');
+        renderer.print(result.summary);
+        renderer.print('');
+      }
+      if (flags.full || !result.summary) {
+        renderer.print('## Transcripción');
+        renderer.print(result.transcript);
+      }
+    } catch (error) {
+      logger.warn({ err: error?.message, url }, 'CLI youtube failed');
+      renderer.error(`YouTube failed: ${error?.message ?? 'unknown error'}`);
+      return { exitCode: 1 };
+    }
+  }, { description: 'Transcribe and summarize a YouTube video' });
 
   router.register('search', async ({ args, flags, renderer }) => {
     const query = args.join(' ').trim();
