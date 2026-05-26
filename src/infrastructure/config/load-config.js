@@ -130,6 +130,21 @@ export function loadConfig(envPath = '.env') {
       },
     },
 
+    whisper: {
+      baseUrl: process.env.WHISPER_BASE_URL ?? '',
+      model: process.env.WHISPER_MODEL ?? 'whisper-1',
+      apiKey: process.env.WHISPER_API_KEY ?? '',
+      timeoutMs: Number(process.env.WHISPER_TIMEOUT_MS ?? 600000),
+    },
+
+    youtube: {
+      ytdlpBin: process.env.YOUTUBE_YTDLP_BIN ?? 'yt-dlp',
+      defaultLanguage: process.env.YOUTUBE_DEFAULT_LANGUAGE ?? 'es',
+      summaryChunkChars: Number(process.env.YOUTUBE_SUMMARY_CHUNK_CHARS ?? 8000),
+      subtitleTimeoutMs: Number(process.env.YOUTUBE_SUBTITLE_TIMEOUT_MS ?? 60000),
+      audioTimeoutMs: Number(process.env.YOUTUBE_AUDIO_TIMEOUT_MS ?? 600000),
+    },
+
     email: {
       provider: process.env.EMAIL_PROVIDER ?? 'disabled',
       readOnly: process.env.EMAIL_READ_ONLY !== 'false',
