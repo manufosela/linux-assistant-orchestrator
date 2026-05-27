@@ -7,7 +7,9 @@ RUN corepack enable && corepack prepare --activate
 RUN pnpm install --frozen-lockfile --prod
 
 FROM node:20-alpine
-RUN apk add --no-cache tini
+# yt-dlp + ffmpeg: required at runtime by src/modules/youtube to fetch subtitles
+# (fast path) or extract audio for local Whisper transcription (fallback).
+RUN apk add --no-cache tini yt-dlp ffmpeg
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
