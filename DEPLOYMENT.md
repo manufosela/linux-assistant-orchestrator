@@ -108,6 +108,8 @@ is enabled, `Cluster watcher started`.
 | `PROMETHEUS_ENABLED` | no | `false` | Enable on-demand "is anything down?" checks |
 | `PROMETHEUS_BASE_URL` | if prometheus | — | Prometheus base URL, e.g. `http://<ip>:9090` |
 | `PROMETHEUS_TIMEOUT_MS` | no | `8000` | Prometheus query timeout |
+| `INBOX_SUMMARY_LANGUAGE` | no | `es` | Target language for `/resumir` (ISO 639-1) |
+| `INBOX_SUMMARY_CHUNK_CHARS` | no | `8000` | Threshold to switch from truncating to chunking long summaries |
 | `CONTAINER_NAME` | no | `luis` | Docker container name |
 
 When `CLUSTER_ENABLED=true`, the three `CLUSTER_N*_IP` values are **required**;

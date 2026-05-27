@@ -122,21 +122,90 @@ describe('inbox-reader.summarise', () => {
     assert.match(result.text, /bla bla bla/);
   });
 
-  it('trunca texto largo a maxInputChars', async () => {
-    let passedMessages = null;
-    const longText = 'x'.repeat(20000);
+  it('texto largo → chunking (varias llamadas al LLM) en vez de truncar', async () => {
+    const longText = 'frase. '.repeat(3000); // ~21000 chars
     const path = await seedExtractedFile(longText);
+    const item = { id: 'a', dir: '/tmp', meta: { extraction: { path } } };
+    const operations = [];
+    const reader = createInboxReader({
+      inboxQuery: mockQuery({ byId: item }),
+      llmService: {
+        chat: async (_msgs, opts) => {
+          operations.push(opts.operation);
+          return opts.operation === 'summarise-final' ? 'RESUMEN_FINAL' : 'parcial';
+        },
+      },
+      summaryChunkChars: 8000,
+    });
+
+    const result = await reader.summarise({ id: 'a' });
+
+    assert.ok(operations.length > 1, 'esperaba >1 llamada al LLM al chunkear');
+    assert.ok(operations.includes('summarise-chunk'));
+    assert.equal(operations[operations.length - 1], 'summarise-final');
+    assert.equal(result.summary, 'RESUMEN_FINAL');
+  });
+
+  it('idioma por defecto (es) aparece en system y user prompts', async () => {
+    let captured = null;
+    const path = await seedExtractedFile('Some English text about a topic.');
     const item = { id: 'a', dir: '/tmp', meta: { extraction: { path } } };
     const reader = createInboxReader({
       inboxQuery: mockQuery({ byId: item }),
-      llmService: { chat: async (msgs) => { passedMessages = msgs; return 'resumen'; } },
+      llmService: { chat: async (msgs) => { captured = msgs; return 'resumen'; } },
     });
 
-    await reader.summarise({ id: 'a', maxInputChars: 100 });
+    await reader.summarise({ id: 'a' });
 
-    // user message contains "Texto a resumir:\n\n" + 100 chars of 'x'
-    const userMsg = passedMessages.find((m) => m.role === 'user');
-    assert.ok(userMsg.content.length < 200);
+    const system = captured.find((m) => m.role === 'system').content;
+    const user = captured.find((m) => m.role === 'user').content;
+    assert.match(system, /SIEMPRE escribe en es/);
+    assert.match(system, /DEBE estar en es/);
+    assert.match(user, /DEBE estar en es/);
+  });
+
+  it('summaryLanguage override (en) se inyecta en los prompts', async () => {
+    let captured = null;
+    const path = await seedExtractedFile('texto en español');
+    const item = { id: 'a', dir: '/tmp', meta: { extraction: { path } } };
+    const reader = createInboxReader({
+      inboxQuery: mockQuery({ byId: item }),
+      llmService: { chat: async (msgs) => { captured = msgs; return 'resumen'; } },
+      summaryLanguage: 'en',
+    });
+
+    await reader.summarise({ id: 'a' });
+
+    const system = captured.find((m) => m.role === 'system').content;
+    const user = captured.find((m) => m.role === 'user').content;
+    assert.match(system, /SIEMPRE escribe en en/);
+    assert.match(user, /DEBE estar en en/);
+  });
+
+  it('en chunking, idioma se fuerza tanto en partial como en final', async () => {
+    const longText = 'frase. '.repeat(3000);
+    const path = await seedExtractedFile(longText);
+    const item = { id: 'a', dir: '/tmp', meta: { extraction: { path } } };
+    const systemPrompts = [];
+    const reader = createInboxReader({
+      inboxQuery: mockQuery({ byId: item }),
+      llmService: {
+        chat: async (msgs) => {
+          systemPrompts.push(msgs.find((m) => m.role === 'system').content);
+          return 'algo';
+        },
+      },
+      summaryChunkChars: 8000,
+      summaryLanguage: 'es',
+    });
+
+    await reader.summarise({ id: 'a' });
+
+    assert.ok(systemPrompts.length > 1);
+    for (const prompt of systemPrompts) {
+      assert.match(prompt, /SIEMPRE escribe en es/);
+      assert.match(prompt, /DEBE estar en es/);
+    }
   });
 
   it('summariseModel override se pasa al llm', async () => {
