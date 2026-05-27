@@ -540,6 +540,22 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     await captureUrlReply(arg, message);
   });
 
+  // Aliases para typos comunes en español: misma lógica que el comando canonical.
+  router.registerAlias('/guardar', '/guarda');
+  router.registerAlias('/resume', '/resumir');
+  router.registerAlias('/abre', '/abrir');
+
+  // Cualquier `/comando` no registrado responde con una pista clara en lugar
+  // de quedarse en silencio. Los mensajes sin slash siguen yendo al fallback NL.
+  router.setUnknownCommandHandler(async (message, command) => {
+    const chatId = message.chat.id;
+    await bot.sendMessage(
+      chatId,
+      `❌ No reconozco el comando <code>${escapeHtml(command)}</code>. Usa /help para ver los disponibles.`,
+      { parse_mode: 'HTML' },
+    );
+  });
+
   if (inboxStore) {
     bot.on('document', (msg) => handleInboxFile(msg, 'document'));
     bot.on('photo', (msg) => handleInboxFile(msg, 'photo'));

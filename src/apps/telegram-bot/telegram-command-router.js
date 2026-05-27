@@ -9,8 +9,12 @@
 export function createTelegramCommandRouter(allowedChatPolicy, logger) {
   /** @type {Map<string, CommandHandler>} */
   const handlers = new Map();
+  /** @type {Map<string, string>} */
+  const aliases = new Map();
   /** @type {CommandHandler | null} */
   let fallbackHandler = null;
+  /** @type {UnknownCommandHandler | null} */
+  let unknownCommandHandler = null;
 
   /**
    * Registers a handler for a given command (e.g. '/status').
@@ -23,6 +27,29 @@ export function createTelegramCommandRouter(allowedChatPolicy, logger) {
   }
 
   /**
+   * Registers an alias that resolves to an existing canonical command.
+   * Typos típicos en español: '/guardar' → '/guarda', '/resume' → '/resumir',
+   * '/abre' → '/abrir'. Invocar el alias ejecuta exactamente el handler del
+   * canonical, sin duplicar lógica.
+   *
+   * @param {string} alias       - slash command including the leading slash (typo común)
+   * @param {string} canonical   - slash command including the leading slash (comando real)
+   */
+  function registerAlias(alias, canonical) {
+    if (typeof alias !== 'string' || !alias.startsWith('/')) {
+      throw new Error(`registerAlias: alias must start with /: ${alias}`);
+    }
+    if (typeof canonical !== 'string' || !canonical.startsWith('/')) {
+      throw new Error(`registerAlias: canonical must start with /: ${canonical}`);
+    }
+    const aliasKey = alias.toLowerCase();
+    if (handlers.has(aliasKey)) {
+      throw new Error(`registerAlias: ${alias} is already a registered command`);
+    }
+    aliases.set(aliasKey, canonical.toLowerCase());
+  }
+
+  /**
    * Registers the handler invoked for non-command messages from authorised chats.
    * Used to bridge natural-language input into the LLM service.
    *
@@ -30,6 +57,17 @@ export function createTelegramCommandRouter(allowedChatPolicy, logger) {
    */
   function setFallback(handler) {
     fallbackHandler = handler;
+  }
+
+  /**
+   * Registers the handler invoked when the user sends a slash command that
+   * does not match any registered handler or alias. Allows the message layer
+   * to send a "use /help" hint without the router needing access to the bot.
+   *
+   * @param {UnknownCommandHandler} handler
+   */
+  function setUnknownCommandHandler(handler) {
+    unknownCommandHandler = handler;
   }
 
   /**
@@ -63,14 +101,16 @@ export function createTelegramCommandRouter(allowedChatPolicy, logger) {
       return;
     }
 
-    const handler = handlers.get(command.toLowerCase());
+    const lookupKey = command.toLowerCase();
+    const canonicalKey = aliases.get(lookupKey) ?? lookupKey;
+    const handler = handlers.get(canonicalKey);
     if (!handler) {
       logger.debug({ chatId, command }, 'Unknown command');
       await handleUnknownCommand(message, command);
       return;
     }
 
-    logger.debug({ chatId, command }, 'Routing command');
+    logger.debug({ chatId, command, canonical: canonicalKey === lookupKey ? undefined : canonicalKey }, 'Routing command');
 
     try {
       await handler(message);
@@ -80,17 +120,24 @@ export function createTelegramCommandRouter(allowedChatPolicy, logger) {
   }
 
   /**
-   * Default response when a command is not registered.
+   * Invoked when the user sends `/something` that is not registered (and not
+   * an alias). If a handler is set via `setUnknownCommandHandler`, it gets the
+   * message + the typed command; otherwise the router stays silent (preserves
+   * historical behaviour).
    *
    * @param {TelegramMessage} message
    * @param {string} command
    */
   async function handleUnknownCommand(message, command) {
-    const knownCommands = [...handlers.keys()].sort().join(', ');
-    void message;
-    void command;
-    void knownCommands;
-    // Response is sent by the message handler — router only dispatches.
+    if (!unknownCommandHandler) return;
+    try {
+      await unknownCommandHandler(message, command);
+    } catch (error) {
+      logger.error(
+        { chatId: message.chat?.id, command, err: error.message },
+        'Unknown-command handler threw an error',
+      );
+    }
   }
 
   /**
@@ -120,7 +167,24 @@ export function createTelegramCommandRouter(allowedChatPolicy, logger) {
     return command ? `/${command}` : null;
   }
 
-  return { register, setFallback, route, listCommands };
+  /**
+   * Returns the map of registered aliases (read-only snapshot).
+   *
+   * @returns {Array<{ alias: string, canonical: string }>}
+   */
+  function listAliases() {
+    return [...aliases.entries()].map(([alias, canonical]) => ({ alias, canonical }));
+  }
+
+  return {
+    register,
+    registerAlias,
+    setFallback,
+    setUnknownCommandHandler,
+    route,
+    listCommands,
+    listAliases,
+  };
 }
 
 /**
@@ -137,9 +201,19 @@ export function createTelegramCommandRouter(allowedChatPolicy, logger) {
  */
 
 /**
+ * @callback UnknownCommandHandler
+ * @param {TelegramMessage} message
+ * @param {string} command  - the typed command (e.g. '/pepito')
+ * @returns {Promise<void>}
+ */
+
+/**
  * @typedef {Object} TelegramCommandRouter
  * @property {(command: string, handler: CommandHandler) => void} register
+ * @property {(alias: string, canonical: string) => void} registerAlias
  * @property {(handler: CommandHandler) => void} setFallback
+ * @property {(handler: UnknownCommandHandler) => void} setUnknownCommandHandler
  * @property {(message: TelegramMessage) => Promise<void>} route
  * @property {() => string[]} listCommands
+ * @property {() => Array<{alias: string, canonical: string}>} listAliases
  */
