@@ -1,8 +1,10 @@
-import { spawn } from 'node:child_process';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { srtToPlainText } from './subtitle-parser.js';
+import { defaultRunCommand, mapYtDlpError, YoutubeError } from './ytdlp-runner.js';
+
+export { YoutubeError };
 
 const DEFAULT_LANGS = ['es', 'en'];
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -80,23 +82,6 @@ export function createYoutubeSubtitleFetcher({
   return { fetchSubtitles };
 }
 
-function defaultRunCommand({ bin, args, timeoutMs, logger }) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (d) => { stdout += d.toString(); });
-    proc.stderr.on('data', (d) => { stderr += d.toString(); });
-    const timer = setTimeout(() => {
-      logger?.warn({ bin, timeoutMs }, 'yt-dlp timed out, killing process');
-      proc.kill('SIGKILL');
-      reject(new YoutubeError('yt-dlp timed out', { code: 'TIMEOUT' }));
-    }, timeoutMs);
-    proc.on('error', (err) => { clearTimeout(timer); reject(err); });
-    proc.on('close', (code) => { clearTimeout(timer); resolve({ code, stdout, stderr }); });
-  });
-}
-
 function pickByLang(files, preferredLangs) {
   for (const lang of preferredLangs) {
     const exact = files.find((f) => f.includes(`.${lang}.`));
@@ -120,28 +105,6 @@ function parseMetadata(stdout) {
     videoId: videoId?.trim() || null,
     title: title?.trim() || null,
   };
-}
-
-function mapYtDlpError(stderr) {
-  const text = (stderr ?? '').toLowerCase();
-  if (text.includes('video unavailable')) {
-    return new YoutubeError('Vídeo no disponible', { code: 'UNAVAILABLE', cause: stderr });
-  }
-  if (text.includes('private video')) {
-    return new YoutubeError('Vídeo privado', { code: 'PRIVATE', cause: stderr });
-  }
-  if (text.includes('is not a valid url')) {
-    return new YoutubeError('URL no válida', { code: 'INVALID_URL', cause: stderr });
-  }
-  return new YoutubeError(`yt-dlp falló: ${(stderr ?? '').slice(0, 200)}`, { code: 'YTDLP_ERROR', cause: stderr });
-}
-
-export class YoutubeError extends Error {
-  constructor(message, { code, cause } = {}) {
-    super(message, { cause });
-    this.name = 'YoutubeError';
-    this.code = code ?? 'UNKNOWN';
-  }
 }
 
 /**

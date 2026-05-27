@@ -10,7 +10,8 @@ The assistant is designed around a **local-first, privacy-first** principle: pri
 
 - **CLI** (`luis`) — interactive REPL plus non-interactive subcommands, sharing the same services as Telegram and the workers. Configurable per-user via `~/.config/luis/config.json`.
 - **Local web UI** — token-protected HTTP API + minimal vanilla-JS dashboard, reachable from the LAN
-- **Telegram bot** — commands `/start`, `/status`, `/llm_status`, `/downloads_rules`, `/fetch`, `/search`, `/ha`, `/anuncia`, `/cluster`, `/caidos`, `/reset`, `/help`, plus a natural-language fallback to the local LLM
+- **Telegram bot** — commands `/start`, `/status`, `/llm_status`, `/downloads_rules`, `/fetch`, `/youtube`, `/search`, `/ha`, `/anuncia`, `/cluster`, `/caidos`, `/reset`, `/help`, plus a natural-language fallback to the local LLM
+- **YouTube ingest** — `luis youtube <url>` (CLI) and `/youtube <url>` (Telegram): tries to fetch subtitles via yt-dlp first; falls back to audio extraction + Whisper if there are none; summarises the transcript through the local LLM. Requires `WHISPER_BASE_URL` (any OpenAI-compatible endpoint, e.g. LiteLLM with whisper.cpp) and `yt-dlp` + `ffmpeg` in the runtime image (already in the Dockerfile).
 - **Authorized chat validation** — only configured Telegram chat IDs can use the bot
 - **Home Assistant integration** — natural-language control and Alexa/Echo announcements via HA
 - **Cluster watcher** — monitors remote nodes/services and alerts on Telegram on failure/recovery (see DEPLOYMENT.md)

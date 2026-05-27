@@ -53,7 +53,7 @@ const INBOX_CATEGORY_EMOJI = {
   revisar: '🤔',
 };
 
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, youtubeService, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -184,6 +184,40 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     } catch (error) {
       logger.warn({ chatId, url, err: error.message }, '/fetch failed');
       await indicator.finish(`❌ No pude descargar: ${error.message}`);
+    }
+  });
+
+  router.register('/youtube', async (message) => {
+    const chatId = message.chat.id;
+    const url = extractArgs(message.text ?? '');
+    if (!url) {
+      await bot.sendMessage(chatId, 'Uso: /youtube &lt;url&gt;', { parse_mode: 'HTML' });
+      return;
+    }
+    if (!youtubeService) {
+      await bot.sendMessage(chatId, 'YouTube no configurado (falta WHISPER_BASE_URL).');
+      return;
+    }
+    const indicator = await createThinkingIndicator(bot, chatId, {
+      text: `🎬 Procesando ${url} …`,
+      logger,
+    });
+    try {
+      const result = await youtubeService.processVideo(url);
+      const titleLine = result.title ? `🎬 <b>${escapeHtml(result.title)}</b>\n` : '';
+      const sourceLabel = result.source === 'subtitles' ? 'subtítulos' : 'whisper';
+      const sourceLine = `<i>fuente: ${sourceLabel}${result.durationSec ? ` · ${Math.round(result.durationSec / 60)} min` : ''}</i>\n\n`;
+      const summary = result.summary ?? '(sin resumen)';
+      // Telegram limita a 4096 chars/mensaje; dejamos colchón para HTML tags.
+      const body = escapeHtml(summary).slice(0, 3800);
+      await indicator.finish(`${titleLine}${sourceLine}${body}`, { parse_mode: 'HTML' });
+      // Adjuntar el transcript completo al contexto del chat para que el LLM
+      // pueda responder preguntas posteriores sobre el contenido del vídeo.
+      const conversation = getConversation(chatId);
+      conversation.appendContext(`YouTube ${url}`, `# ${result.title ?? url}\n\n${result.transcript}`);
+    } catch (error) {
+      logger.warn({ chatId, url, err: error.message }, '/youtube failed');
+      await indicator.finish(`❌ No pude procesar el vídeo: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
     }
   });
 
@@ -793,6 +827,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '',
       '<b>Comandos:</b>',
       '/fetch &lt;url&gt; — descargar URL al contexto',
+      '/youtube &lt;url&gt; — transcribir y resumir un vídeo de YouTube',
       '/search &lt;query&gt; — buscar en la web',
       '/cluster [historial] — estado del cluster (n2/n3/n4) o sus incidencias',
       '/caidos — ¿hay algún servicio caído? (vía Prometheus)',
