@@ -249,6 +249,8 @@ async function main() {
     inboxQuery,
     llmService,
     summariseModel: config.inbox.summariseModel || null,
+    summaryLanguage: config.inbox.summaryLanguage,
+    summaryChunkChars: config.inbox.summaryChunkChars,
     logger,
   });
 

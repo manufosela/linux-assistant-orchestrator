@@ -110,6 +110,12 @@ export function loadConfig(envPath = '.env') {
       // (verified: "coder" works). Empty string = use the default.
       classifyModel: process.env.INBOX_CLASSIFY_MODEL ?? 'coder',
       summariseModel: process.env.INBOX_SUMMARISE_MODEL ?? 'coder',
+      // Idioma destino del resumen, independiente del idioma del texto fuente.
+      // Si el artículo está en inglés y este es 'es', el LLM lo resume en español.
+      summaryLanguage: process.env.INBOX_SUMMARY_LANGUAGE ?? 'es',
+      // Umbral en caracteres para activar chunking del resumen. Textos por encima
+      // de este límite se trocean y se resumen en pasos en lugar de truncarse.
+      summaryChunkChars: Number(process.env.INBOX_SUMMARY_CHUNK_CHARS ?? 8000),
       // Drive folder ID where the processor uploads documents/photos/studies
       // when they finish (TSK-0049). Empty string = Drive upload disabled.
       driveFolderId: process.env.DRIVE_INBOX_FOLDER_ID ?? '',

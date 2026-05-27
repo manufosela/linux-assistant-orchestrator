@@ -1,17 +1,29 @@
 import { readFile } from 'node:fs/promises';
+import { chunkText } from '../llm/text-chunker.js';
 
 /**
  * Reads inbox items' extracted content and optionally summarises it via the
- * local LLM.
+ * local LLM. El resumen se fuerza al `summaryLanguage` configurado (es por
+ * defecto), independientemente del idioma del texto fuente.
  *
  * @param {{
  *   inboxQuery: { findById: Function, findLatestWithExtraction: Function },
- *   llmService: { generateText: Function },
+ *   llmService: { generateText: Function, chat: Function },
+ *   summariseModel?: string | null,
+ *   summaryLanguage?: string,
+ *   summaryChunkChars?: number,
  *   logger?: import('pino').Logger,
  * }} deps
  * @returns {InboxReader}
  */
-export function createInboxReader({ inboxQuery, llmService, summariseModel = null, logger }) {
+export function createInboxReader({
+  inboxQuery,
+  llmService,
+  summariseModel = null,
+  summaryLanguage = 'es',
+  summaryChunkChars = 8000,
+  logger,
+}) {
   if (!inboxQuery) throw new Error('createInboxReader requires inboxQuery');
   if (!llmService) throw new Error('createInboxReader requires llmService');
 
@@ -46,28 +58,27 @@ export function createInboxReader({ inboxQuery, llmService, summariseModel = nul
     const readResult = await read({ id, categories });
     if (!readResult.text) return { ...readResult, summary: null };
 
-    // Trim input to fit the local LLM's context. ~12000 chars ≈ ~3000 tokens —
-    // leaves room for the prompt + reply within typical 8k-token contexts.
-    const input = readResult.text.slice(0, maxInputChars);
     try {
-      // Use chat() (not generateText) so we can override the model. The default
-      // "fast" model on the local cluster returns empty content for these
-      // prompts; we override to a model known to work for Spanish prose
-      // (configurable via INBOX_SUMMARISE_MODEL).
-      const summary = await llmService.chat(
-        [
-          { role: 'system', content: SUMMARISE_SYSTEM_PROMPT },
-          { role: 'user', content: `Texto a resumir:\n\n${input}` },
-        ],
-        {
-          ...(summariseModel ? { model: summariseModel } : {}),
-          module: 'inbox-reader',
-          operation: 'summarise',
-          private: true,
-          temperature: 0.3,
-          maxTokens: 500,
-        },
-      );
+      let summary;
+      if (readResult.text.length <= summaryChunkChars) {
+        summary = await summariseChunk(readResult.text, { isFinal: true });
+      } else {
+        // Texto largo: trocear y meta-resumir. Antes truncábamos a 12000 chars
+        // y se perdía información; ahora procesamos todo el documento.
+        const chunks = chunkText(readResult.text, summaryChunkChars);
+        logger?.info(
+          { id: readResult.item.id, chunks: chunks.length, totalChars: readResult.text.length },
+          'inbox-reader: chunking long summary',
+        );
+        const partials = [];
+        for (const chunk of chunks) {
+          partials.push(await summariseChunk(chunk, { isFinal: false }));
+        }
+        summary = await summariseChunk(partials.filter(Boolean).join('\n\n'), { isFinal: true });
+      }
+      // Mantengo maxInputChars en la firma por compatibilidad: ya no recorta
+      // (el chunking cubre el caso) pero permite forzar truncamiento desde tests.
+      void maxInputChars;
       const trimmed = (summary ?? '').trim();
       if (!trimmed) {
         return { ...readResult, summary: null, reason: 'llm-empty' };
@@ -79,6 +90,36 @@ export function createInboxReader({ inboxQuery, llmService, summariseModel = nul
     }
   }
 
+  /**
+   * Invoca al LLM con prompts que fuerzan `summaryLanguage` como idioma de
+   * salida. La instrucción de idioma se repite al inicio del system prompt y
+   * al final del user message para que modelos pequeños no la pierdan.
+   *
+   * @param {string} text
+   * @param {{ isFinal: boolean }} opts
+   * @returns {Promise<string>}
+   */
+  async function summariseChunk(text, { isFinal }) {
+    const systemPrompt = buildSystemPrompt(summaryLanguage, isFinal);
+    const userPrompt = isFinal
+      ? `Texto a resumir:\n\n${text}\n\nRecuerda: el resumen DEBE estar en ${summaryLanguage}.`
+      : `Resume brevemente este fragmento preservando datos clave (nombres, números, decisiones):\n\n${text}\n\nEl resumen DEBE estar en ${summaryLanguage}.`;
+    return llmService.chat(
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      {
+        ...(summariseModel ? { model: summariseModel } : {}),
+        module: 'inbox-reader',
+        operation: isFinal ? 'summarise-final' : 'summarise-chunk',
+        private: true,
+        temperature: 0.3,
+        maxTokens: 500,
+      },
+    );
+  }
+
   async function resolveItem({ id, categories }) {
     if (id) return inboxQuery.findById(id);
     return inboxQuery.findLatestWithExtraction({ categories });
@@ -87,13 +128,30 @@ export function createInboxReader({ inboxQuery, llmService, summariseModel = nul
   return { read, summarise };
 }
 
-const SUMMARISE_SYSTEM_PROMPT = [
-  'Eres un asistente que resume textos en español.',
-  'Devuelve un resumen de 3 a 5 frases breves capturando los puntos clave.',
-  'NO repitas el texto original.',
-  'NO añadas introducciones tipo "El texto trata de…" — empieza directamente con el contenido.',
-  'NO uses markdown, solo prosa.',
-].join('\n');
+/**
+ * Construye el system prompt de resumen forzando `language` como idioma de
+ * salida. El idioma aparece al inicio (rol) Y se repite en una instrucción
+ * destacada al final, para mitigar el caso de modelos pequeños que ignoran
+ * la línea inicial.
+ *
+ * @param {string} language  ISO 639-1 (p.ej. 'es', 'en')
+ * @param {boolean} isFinal
+ * @returns {string}
+ */
+function buildSystemPrompt(language, isFinal) {
+  const lengthRule = isFinal
+    ? 'Devuelve un resumen de 3 a 5 frases breves capturando los puntos clave.'
+    : 'Devuelve un resumen breve (2-3 frases) preservando datos clave del fragmento.';
+  return [
+    `Eres un asistente que SIEMPRE escribe en ${language}, sin importar el idioma del texto original.`,
+    lengthRule,
+    'NO repitas el texto original.',
+    'NO añadas introducciones tipo "El texto trata de…" — empieza directamente con el contenido.',
+    'NO uses markdown, solo prosa.',
+    '',
+    `IMPORTANTE: El resumen DEBE estar en ${language}. Si el texto original está en otro idioma, tradúcelo al hacer el resumen.`,
+  ].join('\n');
+}
 
 /**
  * @typedef {Object} ReadResult
