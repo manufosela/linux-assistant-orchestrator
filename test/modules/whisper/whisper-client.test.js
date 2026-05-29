@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { Agent } from 'undici';
 import {
   createWhisperClient,
   WhisperError,
@@ -124,6 +125,41 @@ describe('createWhisperClient', () => {
       client.transcribe('/tmp/a.mp3'),
       (err) => err instanceof WhisperError && err.code === 'NETWORK',
     );
+  });
+
+  it('pasa un dispatcher undici al fetch para evitar el timeout de 5 min (LUI-BUG-0003)', async () => {
+    let captured = null;
+    const fetchImpl = async (_url, init) => {
+      captured = init;
+      return { ok: true, status: 200, text: async () => 'ok' };
+    };
+    const client = createWhisperClient({
+      baseUrl: 'http://x',
+      timeoutMs: 1_800_000,
+      fetchImpl,
+      readFileImpl: fakeReadFile(),
+    });
+    await client.transcribe('/tmp/a.mp3');
+    assert.ok(captured.dispatcher, 'fetch init must include a dispatcher');
+    assert.ok(captured.dispatcher instanceof Agent, 'dispatcher must be an undici Agent');
+  });
+
+  it('respeta un dispatcher inyectado (mismo objeto pasa a fetch)', async () => {
+    const customDispatcher = new Agent({ headersTimeout: 999, bodyTimeout: 999 });
+    let captured = null;
+    const fetchImpl = async (_url, init) => {
+      captured = init;
+      return { ok: true, status: 200, text: async () => 'ok' };
+    };
+    const client = createWhisperClient({
+      baseUrl: 'http://x',
+      fetchImpl,
+      readFileImpl: fakeReadFile(),
+      dispatcher: customDispatcher,
+    });
+    await client.transcribe('/tmp/a.mp3');
+    assert.strictEqual(captured.dispatcher, customDispatcher);
+    await customDispatcher.close();
   });
 
   it('checkHealth: 200 → true', async () => {
