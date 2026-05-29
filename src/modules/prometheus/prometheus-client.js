@@ -77,6 +77,7 @@ export function createPrometheusClient({ baseUrl, timeoutMs = 8000, logger, http
         name: alert.labels?.alertname ?? 'alerta',
         severity: alert.labels?.severity ?? '',
         summary: alert.annotations?.summary ?? alert.annotations?.description ?? '',
+        activeAt: alert.activeAt ?? null,
       }));
 
     const report = {
@@ -104,7 +105,7 @@ export function createPrometheusClient({ baseUrl, timeoutMs = 8000, logger, http
  * @property {number} totalProbes - HTTP services reporting a `probe_success` value
  * @property {Array<{ job: string, instance: string }>} downTargets
  * @property {Array<{ job: string, instance: string }>} downProbes
- * @property {Array<{ name: string, severity: string, summary: string }>} firingAlerts
+ * @property {Array<{ name: string, severity: string, summary: string, activeAt: string|null }>} firingAlerts
  * @property {boolean} anythingDown
  */
 
