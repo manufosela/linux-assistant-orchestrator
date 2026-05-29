@@ -1,12 +1,12 @@
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
-# Pin pnpm to package.json#packageManager (9.x — compatible with Node 20).
-# Without this, corepack downloads the latest pnpm (11.x), which requires Node >=22.13.
+# Pin pnpm to package.json#packageManager. pnpm 11 requires Node >=22.13,
+# so the base image must be node:22 (or newer).
 RUN corepack enable && corepack prepare --activate
 RUN pnpm install --frozen-lockfile --prod
 
-FROM node:20-alpine
+FROM node:22-alpine
 # yt-dlp + ffmpeg: required at runtime by src/modules/youtube to fetch subtitles
 # (fast path) or extract audio for local Whisper transcription (fallback).
 RUN apk add --no-cache tini yt-dlp ffmpeg
