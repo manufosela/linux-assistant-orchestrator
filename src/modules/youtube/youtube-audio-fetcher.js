@@ -55,6 +55,10 @@ export function createYoutubeAudioFetcher({
         '-x',
         '--audio-format', audioFormat,
         '--no-warnings',
+        // `--print` implies `--simulate` (no download) unless --no-simulate is set:
+        // https://github.com/yt-dlp/yt-dlp#output-template — sin esto yt-dlp imprime
+        // la metadata, termina con exit 0 y NO descarga, dejando el workdir vacío.
+        '--no-simulate',
         '--print', '%(id)s\t%(title)s\t%(duration)s',
         '-o', join(workdir, '%(id)s.%(ext)s'),
         url,

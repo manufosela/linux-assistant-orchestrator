@@ -86,6 +86,26 @@ describe('createYoutubeAudioFetcher', () => {
     await result.cleanup();
   });
 
+  it('pasa --no-simulate a yt-dlp para contrarrestar el --simulate implícito de --print', async () => {
+    // Regresión LUI-BUG-0002: `--print` implica `--simulate` salvo que se ponga
+    // --no-simulate, lo que dejaba el workdir vacío y el flujo fallaba con NO_AUDIO.
+    let capturedArgs = null;
+    const fetcher = createYoutubeAudioFetcher({
+      runCommand: async ({ args }) => {
+        capturedArgs = args;
+        const oIdx = args.indexOf('-o');
+        const workdir = args[oIdx + 1].replace(/\/%\(id\)s\.%\(ext\)s$/, '');
+        await writeFile(join(workdir, 'vid123.mp3'), 'x', 'utf8');
+        return { code: 0, stdout: 'vid123\tT\t1\n', stderr: '' };
+      },
+    });
+    const result = await fetcher.fetchAudio('https://youtu.be/vid123');
+    assert.ok(capturedArgs.includes('--no-simulate'), 'yt-dlp args must include --no-simulate');
+    assert.ok(capturedArgs.indexOf('--no-simulate') < capturedArgs.indexOf('--print'),
+      '--no-simulate must come before --print to neutralise its implicit --simulate');
+    await result.cleanup();
+  });
+
   it('audioFormat personalizado (m4a) busca ficheros con esa extensión', async () => {
     const fetcher = createYoutubeAudioFetcher({
       audioFormat: 'm4a',
