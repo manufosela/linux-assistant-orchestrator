@@ -88,6 +88,7 @@ export function createUrlCapture({ urlFetcher, inboxStore, logger, now = () => n
       title: fetched.title || null,
       words,
       extractedPath,
+      text: fetched.text || '',
     };
   }
 
@@ -124,6 +125,7 @@ export function extractLeadingUrl(text) {
  * @property {string | null} title
  * @property {number} words
  * @property {string} extractedPath
+ * @property {string} text - texto extraído (vacío si la URL no aportó nada)
  */
 
 /**

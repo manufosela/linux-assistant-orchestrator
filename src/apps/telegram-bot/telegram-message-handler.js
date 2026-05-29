@@ -162,9 +162,46 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
 
   router.register('/fetch', async (message) => {
     const chatId = message.chat.id;
-    const url = extractArgs(message.text ?? '');
+    const url = extractArgs(message.text ?? '').trim();
     if (!url) {
-      await bot.sendMessage(chatId, 'Uso: /fetch &lt;url&gt;', { parse_mode: 'HTML' });
+      await bot.sendMessage(chatId, 'Uso: <code>/fetch &lt;url&gt;</code>', { parse_mode: 'HTML' });
+      return;
+    }
+    if (!isUrl(url)) {
+      await bot.sendMessage(chatId, `❌ No parece una URL válida: <code>${escapeHtml(url)}</code>`, { parse_mode: 'HTML' });
+      return;
+    }
+    // Camino preferido: persistir en inbox (devuelve ID + clasificación) y, además,
+    // inyectar el texto en el contexto del chat para que un siguiente "resúmelo"
+    // siga funcionando sin tocar el inbox. Si urlCapture/inboxStore no están
+    // wireados, cae al fallback antiguo (descarga + contexto, sin persistir).
+    if (urlCapture && inboxStore) {
+      const indicator = await createThinkingIndicator(bot, chatId, {
+        text: '🌐 Descargando URL…',
+        logger,
+      });
+      try {
+        const result = await urlCapture.captureUrl(url, {
+          type: 'telegram',
+          chatId,
+          messageId: message.message_id,
+          kind: 'url',
+        });
+        const shortId = result.item.id.slice(0, 8);
+        const conversation = getConversation(chatId);
+        conversation.appendContext(`Fetched ${result.finalUrl}`, `# ${result.title || '(sin título)'}\n\n${result.text}`);
+        const titleSuffix = result.title ? `, "${escapeHtml(result.title)}"` : '';
+        await indicator.finish(
+          `📥 URL guardada: <code>${shortId}</code>\n` +
+          `📚 <b>estudio</b> — ${result.words} palabras${titleSuffix}\n` +
+          `<i>${escapeHtml(result.finalUrl)}</i>\n\n` +
+          `Pídeme <i>"resúmelo"</i> ahora, o <code>/resumir ${shortId}</code> más tarde.`,
+          { parse_mode: 'HTML', disable_web_page_preview: true },
+        );
+      } catch (error) {
+        logger.warn({ chatId, url, err: error.message }, '/fetch capture failed');
+        await indicator.finish(`❌ No pude descargar: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+      }
       return;
     }
     if (!urlFetcher) {
@@ -180,7 +217,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       const conversation = getConversation(chatId);
       conversation.appendContext(`Fetched ${result.url}`, `# ${result.title || '(sin título)'}\n\n${result.text}`);
       const label = result.title ? `${result.title} — ${result.url}` : result.url;
-      await indicator.finish(`✅ Añadidos ${result.bytes} bytes de ${label} al contexto.`);
+      await indicator.finish(`✅ Añadidos ${result.bytes} bytes de ${label} al contexto. (No persistido: inbox no configurado)`);
     } catch (error) {
       logger.warn({ chatId, url, err: error.message }, '/fetch failed');
       await indicator.finish(`❌ No pude descargar: ${error.message}`);

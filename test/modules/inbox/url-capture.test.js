@@ -85,6 +85,28 @@ describe('url-capture.captureUrl', () => {
     assert.equal(meta.origin.url, 'https://example.com/article');
   });
 
+  it('devuelve el texto extraído en el resultado (para alimentar el contexto del chat)', async () => {
+    const urlFetcher = fakeFetcher({
+      url: 'https://example.com/article',
+      title: 'Mi artículo',
+      text: 'palabra1 palabra2 palabra3',
+    });
+    const capture = createUrlCapture({ urlFetcher, inboxStore, now: () => fixedDate });
+
+    const result = await capture.captureUrl('https://example.com/article', { type: 'telegram' });
+
+    assert.equal(result.text, 'palabra1 palabra2 palabra3');
+  });
+
+  it('si fetched.text está vacío, result.text es "" (no undefined)', async () => {
+    const urlFetcher = fakeFetcher({ url: 'https://x.test', title: '', text: '' });
+    const capture = createUrlCapture({ urlFetcher, inboxStore, now: () => fixedDate });
+
+    const result = await capture.captureUrl('https://x.test', { type: 'telegram' });
+
+    assert.equal(result.text, '');
+  });
+
   it('respeta finalUrl si urlFetcher siguió redirects', async () => {
     const urlFetcher = fakeFetcher({
       url: 'https://example.com/final',
