@@ -34,7 +34,7 @@ const DEFAULT_PUBLIC_DIR = resolve(HERE, 'public');
  * @returns {WebApp}
  */
 export function createWebApp(deps) {
-  const { llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, notificationService, prometheusClient, watchtowerWebhookToken, logger, host, port } = deps;
+  const { llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, notificationService, prometheusClient, watchtowerWebhookToken, aptHealthWebhookToken, logger, host, port } = deps;
   const publicDir = deps.publicDir ?? DEFAULT_PUBLIC_DIR;
 
   /** @type {Map<string, import('./web-routes.js').WebRouteHandler>} */
@@ -45,7 +45,7 @@ export function createWebApp(deps) {
     },
   };
 
-  registerWebRoutes({ registry, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, notificationService, prometheusClient, watchtowerWebhookToken, logger });
+  registerWebRoutes({ registry, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, notificationService, prometheusClient, watchtowerWebhookToken, aptHealthWebhookToken, logger });
 
   const server = http.createServer((req, res) => {
     handleRequest(req, res).catch((error) => {

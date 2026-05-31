@@ -99,6 +99,7 @@ is enabled, `Cluster watcher started`.
 | `WEB_ENABLED` | no | `true` (compose) | Enable LAN web UI |
 | `WEB_PUBLISHED_PORT` | no | `3030` | Host port mapped to container `:3000` |
 | `WATCHTOWER_WEBHOOK_TOKEN` | no | — | Shared secret for the Watchtower webhook (empty = disabled) |
+| `APT_HEALTH_WEBHOOK_TOKEN` | no | — | Shared secret for the apt-health webhook (empty = disabled). See §11. |
 | `WEB_SEARCH_BASE_URL` | no | — | SearXNG base URL |
 | `URL_FETCH_ALLOW_PRIVATE` | no | `false` | Allow fetching private-network URLs |
 | `URL_FETCH_ALLOWLIST` | no | — | CSV of allowed private hosts/IPs |
@@ -264,3 +265,36 @@ Two non-obvious rules, both of which have bitten this project:
   silently skips `load-config.js`.
 
 Prefer the git-on-server workflow above; it sidesteps both pitfalls entirely.
+
+## 11. apt-health → Telegram (cluster-wide auto-update visibility)
+
+Unattended-upgrades runs every night on each host but fails silently when
+dpkg gets into a broken state (kernel module post-install errors, missing
+headers, package conflicts). The `apt-health` hook closes that gap: every
+host posts an alert to LUIS when something needs attention and LUIS relays
+it to the same Telegram channel as `/cluster` and Watchtower.
+
+Three events are reported:
+
+| Event | Trigger |
+|---|---|
+| `upgrade-failed` | `apt-daily-upgrade.service` exits non-zero, or the unattended-upgrades log has `ERROR` since yesterday. |
+| `pending-old` | At least 5 packages remain upgradable for more than 5 days. |
+| `reboot-pending` | `/var/run/reboot-required` exists with mtime older than 7 days. |
+
+**On the LUIS host** — set a shared secret in `.env` and recreate the container:
+
+```
+APT_HEALTH_WEBHOOK_TOKEN=<a-long-random-string>
+```
+
+LUIS then exposes `POST /api/hooks/apt-health` (only when the token is set;
+bad/missing token → 401). Accepts `Authorization: Bearer <token>` or
+`?token=<secret>` for curl-from-script convenience. The endpoint deduplicates
+the same `(host, event, day)` for 24 h so the timer can run frequently
+without spamming Telegram.
+
+**On each host that should report** — copy the unit files and script from
+`scripts/host-setup/apt-health/` and follow the README in that directory.
+The script is dependency-free (only `bash`, `apt`, `curl`, `systemd`).
+

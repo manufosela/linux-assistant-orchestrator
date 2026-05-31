@@ -381,6 +381,7 @@ async function main() {
         notificationService,
         prometheusClient,
         watchtowerWebhookToken: config.watchtower.webhookToken,
+        aptHealthWebhookToken: config.aptHealth.webhookToken,
         logger,
         host: config.web.host,
         port: config.web.port,

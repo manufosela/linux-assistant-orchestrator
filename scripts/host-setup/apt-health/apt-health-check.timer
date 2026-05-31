@@ -1,0 +1,13 @@
+[Unit]
+Description=Ejecuta apt-health-check.service una vez al día (07:30)
+# Se ejecuta tras la rutina de unattended-upgrades (06:00-07:00) para
+# tener el log fresco con el resultado del intento de esta madrugada.
+
+[Timer]
+OnCalendar=*-*-* 07:30:00
+RandomizedDelaySec=10m
+Persistent=true
+Unit=apt-health-check.service
+
+[Install]
+WantedBy=timers.target

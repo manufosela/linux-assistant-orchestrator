@@ -1,0 +1,12 @@
+[Unit]
+Description=Comprueba estado de actualizaciones y avisa por Telegram via LUIS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/apt-health-check.env
+ExecStart=/usr/local/bin/apt-health-check.sh
+# El script gestiona sus propios fallos (loguea, no rompe); no queremos que
+# systemd marque el servicio como failed por curl 5xx pasajeros.
+SuccessExitStatus=0
