@@ -1,0 +1,9 @@
+[Unit]
+Description=Aviso inmediato cuando apt-daily-upgrade.service falla
+# Activado por OnFailure= en el drop-in de apt-daily-upgrade.service.
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/apt-health-check.env
+ExecStart=/usr/local/bin/apt-health-check.sh --event=upgrade-failed
+SuccessExitStatus=0

@@ -70,6 +70,12 @@ export function loadConfig(envPath = '.env') {
       webhookToken: process.env.WATCHTOWER_WEBHOOK_TOKEN ?? '',
     },
 
+    aptHealth: {
+      // Shared secret for the POST /api/hooks/apt-health webhook.
+      // Empty disables the endpoint (503).
+      webhookToken: process.env.APT_HEALTH_WEBHOOK_TOKEN ?? '',
+    },
+
     cluster: {
       enabled: process.env.CLUSTER_ENABLED !== 'false',
       // No hardcoded LAN: the node IPs are deployment-specific and must be
