@@ -302,9 +302,21 @@ function appendMessage(role, content) {
   const label = document.createElement('div');
   label.className = 'message__label';
   label.textContent = labelMap[role] ?? role;
-  const body = document.createElement('pre');
-  body.className = 'message__body';
-  body.textContent = content;
+
+  // El asistente puede devolver markdown; el resto de roles son texto plano
+  // (mensaje del usuario, info de sistema, errores). Renderizamos markdown
+  // sólo para 'assistant'. El renderer de window.luisMarkdown ya escapa HTML.
+  let body;
+  if (role === 'assistant' && window.luisMarkdown) {
+    body = document.createElement('div');
+    body.className = 'message__body message__body--markdown';
+    body.innerHTML = window.luisMarkdown.render(content);
+  } else {
+    body = document.createElement('pre');
+    body.className = 'message__body';
+    body.textContent = content;
+  }
+
   wrapper.appendChild(label);
   wrapper.appendChild(body);
   els.conversation.appendChild(wrapper);
