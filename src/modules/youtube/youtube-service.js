@@ -1,4 +1,5 @@
 import { YoutubeError } from './ytdlp-runner.js';
+import { createTranscriptSummariser, chunkText } from '../summarisation/transcript-summariser.js';
 
 // Umbral por defecto en caracteres para decidir si chunkear el resumen.
 // ~8K chars ≈ ~2K tokens — seguro para casi cualquier modelo local
@@ -40,6 +41,10 @@ export function createYoutubeService({
     throw new Error('createYoutubeService requires subtitleFetcher, audioFetcher, whisperClient and llmService');
   }
 
+  const summariser = createTranscriptSummariser({
+    llmService, chunkChars: summaryChunkChars, logger, module: 'youtube',
+  });
+
   /**
    * @param {string} url
    * @param {{ language?: string, withSummary?: boolean }} [opts]
@@ -62,7 +67,7 @@ export function createYoutubeService({
       throw new YoutubeError('Transcript vacío', { code: 'EMPTY_TRANSCRIPT' });
     }
 
-    const summary = withSummary ? await summarise(transcript, { language, title }) : null;
+    const summary = withSummary ? await summariser.summarise(transcript, { language, title }) : null;
     return { videoId, title, lang, durationSec, source, transcript, summary };
   }
 
@@ -96,62 +101,12 @@ export function createYoutubeService({
     }
   }
 
-  async function summarise(text, { language, title }) {
-    if (text.length <= summaryChunkChars) {
-      return summariseChunk(text, { language, title, isFinal: true });
-    }
-    const chunks = chunkText(text, summaryChunkChars);
-    logger?.info({ chunks: chunks.length, totalChars: text.length }, 'youtube: chunking summary');
-    const partials = [];
-    for (const chunk of chunks) {
-      partials.push(await summariseChunk(chunk, { language, title, isFinal: false }));
-    }
-    return summariseChunk(partials.join('\n\n'), { language, title, isFinal: true });
-  }
-
-  async function summariseChunk(text, { language, title, isFinal }) {
-    const titleLine = title ? `Título: ${title}\n\n` : '';
-    const prompt = isFinal
-      ? `${titleLine}Resume el siguiente texto en ${language}. Devuelve solo el resumen, sin meta-comentarios. Si hay varios temas, usa bullets cortos.\n\n${text}`
-      : `${titleLine}Resume brevemente este fragmento en ${language}, preservando datos clave (nombres, números, decisiones).\n\n${text}`;
-    return llmService.generateText(prompt, {
-      module: 'youtube',
-      operation: isFinal ? 'summary-final' : 'summary-chunk',
-      private: true,
-    });
-  }
-
   return { processVideo };
 }
 
-/**
- * Divide texto en chunks de hasta `maxChars`, intentando cortar en fin
- * de frase (`. `, `? `, `! `) si hay uno razonablemente cerca del final
- * (>50% del chunk), si no corta directo. Devuelve chunks trimeados.
- */
-export function chunkText(text, maxChars) {
-  const chunks = [];
-  let i = 0;
-  while (i < text.length) {
-    const end = Math.min(i + maxChars, text.length);
-    let breakAt = end;
-    if (end < text.length) {
-      const slice = text.slice(i, end);
-      const lastSentenceEnd = Math.max(
-        slice.lastIndexOf('. '),
-        slice.lastIndexOf('? '),
-        slice.lastIndexOf('! '),
-      );
-      if (lastSentenceEnd > maxChars * 0.5) {
-        breakAt = i + lastSentenceEnd + 1;
-      }
-    }
-    const chunk = text.slice(i, breakAt).trim();
-    if (chunk.length > 0) chunks.push(chunk);
-    i = breakAt;
-  }
-  return chunks;
-}
+// `chunkText` se reexporta por compatibilidad con tests y consumidores externos
+// que lo importaban desde aquí antes del refactor LUI-TSK-0059.
+export { chunkText };
 
 /**
  * @typedef {Object} YoutubeService

@@ -97,6 +97,15 @@ export function loadConfig(envPath = '.env') {
       timeoutMs: Number(process.env.PROMETHEUS_TIMEOUT_MS ?? 8000),
     },
 
+    media: {
+      // Límites para /transcribe (vídeo/audio local subido por Telegram o
+      // pasado por la CLI). El tope superior depende mucho del Whisper
+      // backend; los defaults asumen CPU pequeña (~30 min audio = 500 MB
+      // sería excesivo, pero damos margen para vídeo crudo).
+      maxBytes: Number(process.env.MEDIA_LOCAL_MAX_BYTES ?? 500 * 1024 * 1024),
+      maxDurationSec: Number(process.env.MEDIA_LOCAL_MAX_DURATION_S ?? 4 * 60 * 60),
+    },
+
     downloads: {
       watchPath: process.env.DOWNLOADS_PATH ?? '/tmp/downloads',
       rulesPath: process.env.DOWNLOAD_RULES_PATH ?? './config/download-rules.json',

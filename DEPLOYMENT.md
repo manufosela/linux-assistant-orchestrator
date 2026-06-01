@@ -123,6 +123,8 @@ is enabled, `Cluster watcher started`.
 | `WHISPER_MODEL` | no | `whisper-1` | Whisper model name |
 | `WHISPER_API_KEY` | no | — | Only if the endpoint requires auth |
 | `WHISPER_TIMEOUT_MS` | no | `600000` | Per-request timeout (10 min default for long audios) |
+| `MEDIA_LOCAL_MAX_BYTES` | no | `524288000` | Tope para `/transcribe`/`luis transcribe` (500 MB default) |
+| `MEDIA_LOCAL_MAX_DURATION_S` | no | `14400` | Duración máxima aceptada (4 h default) |
 | `YOUTUBE_YTDLP_BIN` | no | `yt-dlp` | Path/name of the yt-dlp binary |
 | `YOUTUBE_DEFAULT_LANGUAGE` | no | `es` | Preferred subtitle language; falls back to `en` |
 | `YOUTUBE_SUMMARY_CHUNK_CHARS` | no | `8000` | Chunk size threshold for long-transcript summaries |

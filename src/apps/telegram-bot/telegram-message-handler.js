@@ -53,7 +53,7 @@ const INBOX_CATEGORY_EMOJI = {
   revisar: '🤔',
 };
 
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, youtubeService, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, youtubeService, mediaTranscriber, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -835,6 +835,15 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       return;
     }
 
+    // Audio/vídeo (no voice notes — esas las clasifica el router como 'voz'):
+    // transcribe + resume directamente y devuelve el resumen al chat. La
+    // voz corta sigue el camino normal del inboxProcessor (transcribe sin
+    // resumen, escribe extracted.md, queda en inbox).
+    if (mediaTranscriber && (kind === 'audio' || kind === 'video')) {
+      await transcribeAndReply(item, kind, chatId);
+      return;
+    }
+
     // Classify + dispatch. The processor never throws (errors are surfaced as
     // markError in the store), so failures here are only network/parse issues
     // we want to log but never re-throw from the message handler.
@@ -852,6 +861,58 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
         { parse_mode: 'HTML' });
     } catch (error) {
       logger.warn({ id: item.id, err: error.message }, 'inbox processing failed');
+    }
+  }
+
+  /**
+   * Transcribe + resume un item de inbox de tipo audio/video, escribe el
+   * extracted.md y manda el resumen (con preview del transcript) al chat.
+   *
+   * @param {{ id: string, dir: string, meta: object }} item
+   * @param {string} kind  'audio' | 'video'
+   * @param {number} chatId
+   */
+  async function transcribeAndReply(item, kind, chatId) {
+    if (!item.meta.fileName) {
+      await bot.sendMessage(chatId, `⚠️ Item ${item.id.slice(0, 8)} no tiene fileName; no puedo transcribir.`);
+      return;
+    }
+    const filePath = `${item.dir}/${item.meta.fileName}`;
+    const indicator = await createThinkingIndicator(bot, chatId, {
+      text: `🎙️ Transcribiendo ${kind}…`,
+      logger,
+    });
+    try {
+      const result = await mediaTranscriber.transcribe(filePath, { withSummary: true });
+      // Persistir como extracted.md y marcar item como routed (igual que voice).
+      const { writeFile } = await import('node:fs/promises');
+      const extractedPath = `${item.dir}/extracted.md`;
+      const body = [
+        `# ${kind === 'video' ? 'Vídeo' : 'Audio'} — ${item.meta.fileName}`,
+        '',
+        `> Inbox ${item.id}`,
+        '',
+        '## Resumen',
+        '',
+        result.summary ?? '(sin resumen)',
+        '',
+        '## Transcripción',
+        '',
+        result.transcript,
+      ].join('\n');
+      await writeFile(extractedPath, body, 'utf8');
+      if (inboxStore) {
+        try { await inboxStore.markRouted(item.id, `extracted:${extractedPath}`); }
+        catch (e) { logger.debug({ err: e.message }, 'markRouted failed (non-fatal)'); }
+      }
+      const preview = result.summary ?? result.transcript.slice(0, 400);
+      await indicator.finish(
+        `🎙️ <b>Resumen</b> de ${escapeHtml(item.meta.fileName)}:\n\n${escapeHtml(preview)}\n\n` +
+        `📥 Guardado como <code>${item.id.slice(0, 8)}</code> · /resumir ${item.id.slice(0, 8)} para releer`,
+        { parse_mode: 'HTML' });
+    } catch (error) {
+      logger.warn({ chatId, id: item.id, err: error.message }, 'media transcribe failed');
+      await indicator.finish(`❌ No pude transcribir: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
     }
   }
 

@@ -1,6 +1,8 @@
 import { writeFile, readFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
+const VOICE_MAX_TRANSCRIPT_PREVIEW = 4000;
+
 /**
  * Inbox processor — glues the classifier (router) to the action layer.
  *
@@ -48,6 +50,7 @@ export function createInboxProcessor({
   markitdownClient = null,
   driveClient = null,
   driveInboxFolderId = null,
+  mediaTranscriber = null,
   logger,
   now = () => new Date(),
 }) {
@@ -104,11 +107,7 @@ export function createInboxProcessor({
           message: 'item descartado',
         };
       case 'voz':
-        return {
-          kind: 'pending-voice',
-          markRouted: false,
-          message: 'pendiente transcripción (TSK-0048)',
-        };
+        return transcribeVoice(itemRef);
       case 'documento':
       case 'estudio':
         return extractDocument(itemRef, classification.category);
@@ -135,6 +134,61 @@ export function createInboxProcessor({
    * if the text turns out to be substantial (>= OCR_THRESHOLD_WORDS), treat
    * the photo as a 'documento' instead.
    */
+  /**
+   * Voice notes (TSK-0048): si hay mediaTranscriber configurado, transcribe el
+   * audio del item con Whisper y guarda el transcript como `extracted.md`,
+   * marcando el item como routed. Si no hay transcriber o falla, deja el
+   * item en pending para no perder el audio.
+   */
+  async function transcribeVoice(itemRef) {
+    if (!mediaTranscriber) {
+      return {
+        kind: 'pending-voice',
+        markRouted: false,
+        message: 'pendiente transcripción (mediaTranscriber no configurado)',
+      };
+    }
+    if (!itemRef.meta.fileName) {
+      return {
+        kind: 'pending-voice',
+        markRouted: false,
+        message: 'pendiente transcripción (item sin fileName)',
+      };
+    }
+    const filePath = join(itemRef.dir, itemRef.meta.fileName);
+    try {
+      const result = await mediaTranscriber.transcribe(filePath, { withSummary: false });
+      const extractedPath = join(itemRef.dir, 'extracted.md');
+      const title = itemRef.meta.textCaption ? itemRef.meta.textCaption.slice(0, 80) : 'Voice note';
+      const body = [
+        `# ${title}`,
+        '',
+        `> Fuente: voice note (inbox ${itemRef.id})`,
+        `> Transcrito: ${now().toISOString()}`,
+        '',
+        result.transcript.slice(0, VOICE_MAX_TRANSCRIPT_PREVIEW * 100),
+      ].join('\n');
+      await writeFile(extractedPath, body, 'utf8');
+      const words = result.transcript.split(/\s+/).filter(Boolean).length;
+      await annotateExtraction(itemRef, {
+        path: extractedPath, words, title: null, source: 'whisper',
+      });
+      return {
+        kind: 'voice-transcribed',
+        markRouted: true,
+        routedTo: `extracted:${extractedPath}`,
+        message: `transcrito (${words} palabras)`,
+      };
+    } catch (error) {
+      logger?.warn({ id: itemRef.id, err: error.message }, 'voice transcription failed');
+      return {
+        kind: 'pending-voice',
+        markRouted: false,
+        message: `transcripción falló: ${error.message}`,
+      };
+    }
+  }
+
   async function processPhoto(itemRef) {
     let extractInfo = null;
     let reclassified = false;

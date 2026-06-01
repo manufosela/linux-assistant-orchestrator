@@ -84,7 +84,7 @@ export function createCliApp(deps) {
  * }} deps
  */
 function registerCommands(deps) {
-  const { router, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, googleAuth, clusterStatus, gmailClient, calendarClient, driveClient, youtubeService, logger, remoteCodeTasksEnabled } = deps;
+  const { router, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, googleAuth, clusterStatus, gmailClient, calendarClient, driveClient, youtubeService, mediaTranscriber, logger, remoteCodeTasksEnabled } = deps;
 
   router.register('status', async ({ renderer }) => {
     const status = statusService.getStatus();
@@ -320,6 +320,39 @@ function registerCommands(deps) {
       return { exitCode: 1 };
     }
   }, { description: 'Transcribe and summarize a YouTube video' });
+
+  router.register('transcribe', async ({ args, flags, renderer }) => {
+    const path = args[0];
+    if (!path) {
+      renderer.error('Usage: luis transcribe <path> [--full] [--no-summary] [--lang=es]');
+      return { exitCode: 1 };
+    }
+    if (!mediaTranscriber) {
+      renderer.error('Media transcription is not configured. Set WHISPER_BASE_URL and ensure ffmpeg is available.');
+      return { exitCode: 1 };
+    }
+    const withSummary = flags['no-summary'] !== true && flags.summary !== 'false';
+    const language = typeof flags.lang === 'string' ? flags.lang : undefined;
+    try {
+      const result = await mediaTranscriber.transcribe(path, { withSummary, language });
+      const sizeMB = (result.sizeBytes / 1024 / 1024).toFixed(1);
+      renderer.info(`Fuente: ${result.sourceKind} · ${sizeMB} MB${result.audioExtracted ? ' · audio extraído con ffmpeg' : ''}`);
+      renderer.print('');
+      if (result.summary) {
+        renderer.print('## Resumen');
+        renderer.print(result.summary);
+        renderer.print('');
+      }
+      if (flags.full || !result.summary) {
+        renderer.print('## Transcripción');
+        renderer.print(result.transcript);
+      }
+    } catch (error) {
+      logger.warn({ err: error?.message, path }, 'CLI transcribe failed');
+      renderer.error(`Transcribe failed: ${error?.message ?? 'unknown error'}`);
+      return { exitCode: 1 };
+    }
+  }, { description: 'Transcribe and summarize a local audio or video file' });
 
   router.register('search', async ({ args, flags, renderer }) => {
     const query = args.join(' ').trim();

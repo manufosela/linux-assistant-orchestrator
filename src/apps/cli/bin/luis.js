@@ -28,6 +28,8 @@ import { createWhisperClient } from '../../../modules/whisper/whisper-client.js'
 import { createYoutubeSubtitleFetcher } from '../../../modules/youtube/youtube-subtitle-fetcher.js';
 import { createYoutubeAudioFetcher } from '../../../modules/youtube/youtube-audio-fetcher.js';
 import { createYoutubeService } from '../../../modules/youtube/youtube-service.js';
+import { createMediaTranscriber } from '../../../modules/media/media-transcriber.js';
+import { createTranscriptSummariser } from '../../../modules/summarisation/transcript-summariser.js';
 import { createCliApp } from '../create-cli-app.js';
 import { loadUserConfig } from '../user-config-loader.js';
 
@@ -160,10 +162,28 @@ async function main() {
     historyStore: createClusterHistoryStore({ filePath: config.cluster.historyPath, logger }),
   });
 
-  // YouTube transcription: solo se activa si hay endpoint Whisper configurado.
-  // Sin Whisper, la slow-path (vídeos sin subtítulos) no funciona y preferimos
-  // no exponer el comando a medias.
-  const youtubeService = config.whisper.baseUrl
+  // Whisper compartido entre /youtube y /transcribe — sin baseUrl, ambos
+  // comandos quedan deshabilitados con mensaje "not configured".
+  const sharedWhisperClient = config.whisper.baseUrl
+    ? createWhisperClient({
+        baseUrl: config.whisper.baseUrl,
+        model: config.whisper.model,
+        apiKey: config.whisper.apiKey,
+        timeoutMs: config.whisper.timeoutMs,
+        logger,
+      })
+    : undefined;
+
+  const sharedSummariser = sharedWhisperClient
+    ? createTranscriptSummariser({
+        llmService,
+        chunkChars: config.youtube.summaryChunkChars,
+        logger,
+        module: 'media',
+      })
+    : undefined;
+
+  const youtubeService = sharedWhisperClient
     ? createYoutubeService({
         subtitleFetcher: createYoutubeSubtitleFetcher({
           ytdlpBin: config.youtube.ytdlpBin,
@@ -175,16 +195,21 @@ async function main() {
           timeoutMs: config.youtube.audioTimeoutMs,
           logger,
         }),
-        whisperClient: createWhisperClient({
-          baseUrl: config.whisper.baseUrl,
-          model: config.whisper.model,
-          apiKey: config.whisper.apiKey,
-          timeoutMs: config.whisper.timeoutMs,
-          logger,
-        }),
+        whisperClient: sharedWhisperClient,
         llmService,
         defaultLanguage: config.youtube.defaultLanguage,
         summaryChunkChars: config.youtube.summaryChunkChars,
+        logger,
+      })
+    : undefined;
+
+  const mediaTranscriber = sharedWhisperClient
+    ? createMediaTranscriber({
+        whisperClient: sharedWhisperClient,
+        summariser: sharedSummariser,
+        maxBytes: config.media.maxBytes,
+        maxDurationSec: config.media.maxDurationSec,
+        defaultLanguage: config.youtube.defaultLanguage,
         logger,
       })
     : undefined;
@@ -204,6 +229,7 @@ async function main() {
     calendarClient,
     driveClient,
     youtubeService,
+    mediaTranscriber,
     logger,
     appName: APP_NAME,
     appVersion: pkg.version,
