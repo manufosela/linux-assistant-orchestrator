@@ -1,3 +1,4 @@
+import { setGlobalDispatcher, Agent } from 'undici';
 import { loadConfig } from './infrastructure/config/load-config.js';
 import { createLogger } from './infrastructure/logger/create-logger.js';
 import { createScheduler } from './infrastructure/scheduler/scheduler.js';
@@ -212,6 +213,19 @@ async function main() {
     gmailClient = createGmailClient({ googleAuth, llmService, logger });
     calendarClient = createGoogleCalendarClient({ googleAuth, logger });
     driveClient = createGoogleDriveClient({ googleAuth, logger });
+  }
+
+  // LUI-BUG-0004: subir headersTimeout/bodyTimeout del fetch global a 30 min
+  // para que Whisper pueda procesar audios largos sin que undici aborte a
+  // los 5 min por defecto. Hay que hacerlo ANTES de crear ningún cliente.
+  // Sólo aplicamos esto si hay endpoint Whisper configurado, para no afectar
+  // a deploys que no lo usan.
+  if (config.whisper.baseUrl) {
+    setGlobalDispatcher(new Agent({
+      headersTimeout: config.whisper.timeoutMs,
+      bodyTimeout: config.whisper.timeoutMs,
+    }));
+    logger.info({ timeoutMs: config.whisper.timeoutMs }, 'undici global dispatcher set for long Whisper requests');
   }
 
   // Whisper + summariser compartidos entre /youtube y /transcribe.

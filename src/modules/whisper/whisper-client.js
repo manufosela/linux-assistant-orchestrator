@@ -1,25 +1,16 @@
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
-import { Agent } from 'undici';
 
 const DEFAULT_TIMEOUT_MS = 600_000;
 const DEFAULT_MODEL = 'whisper-1';
 
-/**
- * undici (el fetch interno de Node 18+) impone headersTimeout y bodyTimeout
- * propios (300_000 ms por defecto). El AbortController + setTimeout que usa
- * el cliente NO los anula: cuando Whisper procesa un audio largo en CPU,
- * tarda varios minutos en empezar a responder y undici aborta a los 5 min
- * con `UND_ERR_HEADERS_TIMEOUT`, que se manifiesta como "fetch failed".
- * Por eso construimos un Agent dedicado con los timeouts alineados al
- * timeoutMs configurado por el caller.
- *
- * @param {number} timeoutMs
- * @returns {Agent}
- */
-function buildDispatcher(timeoutMs) {
-  return new Agent({ headersTimeout: timeoutMs, bodyTimeout: timeoutMs });
-}
+// NOTA (LUI-BUG-0003/0004): undici (el fetch interno de Node) impone
+// headersTimeout/bodyTimeout de 5 min por defecto. La forma "obvia" de
+// extenderlos — pasar un Agent custom como `dispatcher` en `fetch` — rompe
+// con FormData multipart (UND_ERR_INVALID_ARG: invalid onRequestStart
+// method). La solución correcta es llamar a `setGlobalDispatcher` en el
+// bootstrap del proceso, antes de crear ningún cliente. Ver main.js y
+// cli/bin/luis.js.
 
 export class WhisperError extends Error {
   constructor(message, { code, cause } = {}) {
@@ -43,7 +34,6 @@ export class WhisperError extends Error {
  *   logger?: import('pino').Logger,
  *   fetchImpl?: typeof fetch,
  *   readFileImpl?: typeof readFile,
- *   dispatcher?: import('undici').Dispatcher,
  * }} deps
  * @returns {WhisperClient}
  */
@@ -55,11 +45,9 @@ export function createWhisperClient({
   logger,
   fetchImpl = fetch,
   readFileImpl = readFile,
-  dispatcher,
 } = {}) {
   if (!baseUrl) throw new Error('createWhisperClient requires baseUrl');
   const root = baseUrl.replace(/\/+$/, '');
-  const effectiveDispatcher = dispatcher ?? buildDispatcher(timeoutMs);
 
   /**
    * Transcribe un fichero de audio local. Devuelve el texto plano sin
@@ -91,7 +79,6 @@ export function createWhisperClient({
         headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
         body: form,
         signal: controller.signal,
-        dispatcher: effectiveDispatcher,
       });
     } catch (err) {
       if (err.name === 'AbortError') {
