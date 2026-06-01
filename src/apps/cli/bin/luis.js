@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { setGlobalDispatcher, Agent } from 'undici';
 
 import { loadConfig } from '../../../infrastructure/config/load-config.js';
 import { createLogger } from '../../../infrastructure/logger/create-logger.js';
@@ -161,6 +162,16 @@ async function main() {
     targets: buildClusterTargets(config.cluster),
     historyStore: createClusterHistoryStore({ filePath: config.cluster.historyPath, logger }),
   });
+
+  // LUI-BUG-0004: ajustar el dispatcher global de undici para que las
+  // peticiones a Whisper con audios largos no aborten en 5 min (el default
+  // de headersTimeout). Sólo si hay endpoint Whisper configurado.
+  if (config.whisper.baseUrl) {
+    setGlobalDispatcher(new Agent({
+      headersTimeout: config.whisper.timeoutMs,
+      bodyTimeout: config.whisper.timeoutMs,
+    }));
+  }
 
   // Whisper compartido entre /youtube y /transcribe — sin baseUrl, ambos
   // comandos quedan deshabilitados con mensaje "not configured".
