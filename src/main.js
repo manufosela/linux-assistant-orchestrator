@@ -35,6 +35,8 @@ import { createGmailClient } from './modules/email/gmail-client.js';
 import { createGoogleCalendarClient } from './modules/calendar/google-calendar-client.js';
 import { createGoogleDriveClient } from './modules/drive/google-drive-client.js';
 import { createWhisperClient } from './modules/whisper/whisper-client.js';
+import { createMediaTranscriber } from './modules/media/media-transcriber.js';
+import { createTranscriptSummariser } from './modules/summarisation/transcript-summariser.js';
 import { createYoutubeSubtitleFetcher } from './modules/youtube/youtube-subtitle-fetcher.js';
 import { createYoutubeAudioFetcher } from './modules/youtube/youtube-audio-fetcher.js';
 import { createYoutubeService } from './modules/youtube/youtube-service.js';
@@ -212,10 +214,30 @@ async function main() {
     driveClient = createGoogleDriveClient({ googleAuth, logger });
   }
 
+  // Whisper + summariser compartidos entre /youtube y /transcribe.
+  // Sin baseUrl no hay ni transcripción ni resumen-de-audio: ambos comandos
+  // responderán "no configurado" y el resto del bot seguirá funcionando.
+  const sharedWhisperClient = config.whisper.baseUrl
+    ? createWhisperClient({
+        baseUrl: config.whisper.baseUrl,
+        model: config.whisper.model,
+        apiKey: config.whisper.apiKey,
+        timeoutMs: config.whisper.timeoutMs,
+        logger,
+      })
+    : undefined;
+
+  const sharedSummariser = sharedWhisperClient
+    ? createTranscriptSummariser({
+        llmService,
+        chunkChars: config.youtube.summaryChunkChars,
+        logger,
+        module: 'media',
+      })
+    : undefined;
+
   // YouTube transcription pipeline (subs → audio → whisper → llm summary).
-  // Solo se activa si hay endpoint Whisper configurado; sin él la slow-path
-  // (vídeos sin subtítulos) no funciona y preferimos no exponer /youtube a medias.
-  const youtubeService = config.whisper.baseUrl
+  const youtubeService = sharedWhisperClient
     ? createYoutubeService({
         subtitleFetcher: createYoutubeSubtitleFetcher({
           ytdlpBin: config.youtube.ytdlpBin,
@@ -227,16 +249,24 @@ async function main() {
           timeoutMs: config.youtube.audioTimeoutMs,
           logger,
         }),
-        whisperClient: createWhisperClient({
-          baseUrl: config.whisper.baseUrl,
-          model: config.whisper.model,
-          apiKey: config.whisper.apiKey,
-          timeoutMs: config.whisper.timeoutMs,
-          logger,
-        }),
+        whisperClient: sharedWhisperClient,
         llmService,
         defaultLanguage: config.youtube.defaultLanguage,
         summaryChunkChars: config.youtube.summaryChunkChars,
+        logger,
+      })
+    : undefined;
+
+  // Local media transcriber: ficheros video/audio subidos por Telegram o
+  // pasados por la CLI. Comparte whisperClient y summariser con youtube.
+  const mediaTranscriber = sharedWhisperClient
+    ? createMediaTranscriber({
+        whisperClient: sharedWhisperClient,
+        summariser: sharedSummariser,
+        ffmpegBin: 'ffmpeg',
+        maxBytes: config.media.maxBytes,
+        maxDurationSec: config.media.maxDurationSec,
+        defaultLanguage: config.youtube.defaultLanguage,
         logger,
       })
     : undefined;
@@ -269,6 +299,7 @@ async function main() {
     markitdownClient,
     driveClient: config.inbox.driveFolderId ? driveClient : null,
     driveInboxFolderId: config.inbox.driveFolderId || null,
+    mediaTranscriber,
     logger,
   });
   if (!config.inbox.driveFolderId) {
@@ -323,6 +354,7 @@ async function main() {
       inboxQuery,
       inboxReader,
       youtubeService,
+      mediaTranscriber,
       router,
       logger,
     });
