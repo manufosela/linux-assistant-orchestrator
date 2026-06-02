@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import { createDigestRunner } from '../../../src/modules/email/digest-runner.js';
 import { createDigestLastRunStore } from '../../../src/modules/email/digest-last-run-store.js';
+import { createSummaryStore } from '../../../src/modules/email/summary-store.js';
 
 function buildGmailDigest({ resultsByQuery = {} } = {}) {
   const calls = { fetchList: [] };
@@ -207,6 +208,131 @@ describe('createDigestRunner.runListLabel', () => {
     });
     await runner.runListLabel({ labelName: 'Mi Etiqueta', notify: async () => {} });
     assert.equal(digest.calls.fetchList[0].query, 'is:unread label:"Mi Etiqueta"');
+  });
+});
+
+describe('createDigestRunner.runSummaryLabel', () => {
+  let tmp;
+  let lastRunStore;
+  let summaryStore;
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'luis-digest-runner-summary-'));
+    lastRunStore = createDigestLastRunStore({ dir: join(tmp, 'last-run') });
+    const { createSummaryStore } = await import('../../../src/modules/email/summary-store.js');
+    summaryStore = createSummaryStore({ dir: join(tmp, 'summaries') });
+  });
+
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it('resume cada correo, persiste y envía índice con /resumen <shortId>', async () => {
+    const digest = buildGmailDigest({
+      resultsByQuery: {
+        'is:unread label:Estudio': {
+          ids: ['m1', 'm2'],
+          emails: [
+            { id: 'm1', from: 'a@x.com', subject: 'Curso ML', date: '', snippet: 'snippet 1' },
+            { id: 'm2', from: 'b@x.com', subject: 'Paper', date: '', snippet: 'snippet 2' },
+          ],
+          truncated: false,
+        },
+      },
+    });
+    const labels = buildGmailLabels();
+    const calls = [];
+    const llmService = {
+      async generateText(prompt, meta) {
+        calls.push(meta);
+        return `resumen para ${prompt.match(/Asunto: (.+)/)[1]}`;
+      },
+    };
+    const { createDigestRunner: build } = await import('../../../src/modules/email/digest-runner.js');
+    const runner = build({
+      gmailDigest: digest.digest,
+      gmailLabels: labels.client,
+      lastRunStore,
+      summaryStore,
+      llmService,
+    });
+    const sent = [];
+    const r = await runner.runSummaryLabel({
+      labelName: 'Estudio',
+      notify: async (text) => { sent.push(text); },
+    });
+    assert.equal(r.sent, true);
+    assert.equal(r.count, 2);
+    assert.equal(r.summaries.length, 2);
+    assert.equal(sent.length, 1);
+    assert.match(sent[0], /Estudio/);
+    assert.match(sent[0], /\/resumen [a-f0-9]{8}/);
+    assert.match(sent[0], /Curso ML/);
+    assert.equal(calls.length, 2, 'una llamada LLM por correo');
+    // Y los resúmenes son recuperables
+    for (const { shortId } of r.summaries) {
+      const entry = await summaryStore.get(shortId);
+      assert.ok(entry, 'el resumen debe estar persistido');
+      assert.match(entry.summary, /resumen para/);
+    }
+  });
+
+  it('si el LLM falla, usa fallback con el snippet (no aborta)', async () => {
+    const digest = buildGmailDigest({
+      resultsByQuery: {
+        'is:unread label:X': {
+          ids: ['m1'],
+          emails: [{ id: 'm1', from: 'x@y', subject: 'asunto', date: '', snippet: 'el contenido' }],
+          truncated: false,
+        },
+      },
+    });
+    const labels = buildGmailLabels();
+    const llmService = {
+      async generateText() { throw new Error('LLM down'); },
+    };
+    const { createDigestRunner: build } = await import('../../../src/modules/email/digest-runner.js');
+    const runner = build({
+      gmailDigest: digest.digest,
+      gmailLabels: labels.client,
+      lastRunStore,
+      summaryStore,
+      llmService,
+    });
+    const sent = [];
+    const r = await runner.runSummaryLabel({ labelName: 'X', notify: async (t) => sent.push(t) });
+    assert.equal(r.sent, true);
+    const entry = await summaryStore.get(r.summaries[0].shortId);
+    assert.match(entry.summary, /el contenido/, 'fallback con el snippet');
+  });
+
+  it('día siguiente: marca como leídos los ids del envío anterior', async () => {
+    await lastRunStore.write('Estudio', ['old1', 'old2'], '');
+    const digest = buildGmailDigest({
+      resultsByQuery: {
+        'is:unread label:Estudio': {
+          ids: ['new1'],
+          emails: [{ id: 'new1', from: '', subject: 'nuevo', date: '', snippet: '' }],
+          truncated: false,
+        },
+      },
+    });
+    const labels = buildGmailLabels();
+    const llmService = { async generateText() { return 'ok'; } };
+    const { createDigestRunner: build } = await import('../../../src/modules/email/digest-runner.js');
+    const runner = build({
+      gmailDigest: digest.digest,
+      gmailLabels: labels.client,
+      lastRunStore,
+      summaryStore,
+      llmService,
+    });
+    const r = await runner.runSummaryLabel({ labelName: 'Estudio', notify: async () => {} });
+    assert.equal(r.markedAsRead, 2);
+    assert.deepEqual(
+      labels.calls.removeLabels.map((c) => c.messageId).sort(),
+      ['old1', 'old2'],
+    );
   });
 });
 

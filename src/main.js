@@ -38,6 +38,7 @@ import { createGmailDigest, scheduleDaily as scheduleDailyGmailDigest } from './
 import { createDigestConfigStore } from './modules/email/digest-config-store.js';
 import { createDigestLastRunStore } from './modules/email/digest-last-run-store.js';
 import { createDigestRunner } from './modules/email/digest-runner.js';
+import { createSummaryStore } from './modules/email/summary-store.js';
 import { createGoogleCalendarClient } from './modules/calendar/google-calendar-client.js';
 import { createGoogleDriveClient } from './modules/drive/google-drive-client.js';
 import { createWhisperClient } from './modules/whisper/whisper-client.js';
@@ -317,11 +318,17 @@ async function main() {
     dir: `${config.gmailDigest.cachePath}/last-run`,
     logger,
   });
+  const summaryStore = createSummaryStore({
+    dir: `${config.gmailDigest.cachePath}/summaries`,
+    logger,
+  });
   const digestRunner = gmailDigest && gmailLabels
     ? createDigestRunner({
         gmailDigest,
         gmailLabels,
         lastRunStore: digestLastRunStore,
+        summaryStore,
+        llmService,
         logger,
       })
     : null;
@@ -400,6 +407,7 @@ async function main() {
       gmailDigest,
       gmailDigestConfig: config.gmailDigest,
       digestConfigStore,
+      summaryStore,
       calendarClient,
       driveClient,
       inboxStore,
@@ -478,12 +486,12 @@ async function main() {
               notify: (text) => notificationService.sendNotification({ text, level: 'info' }),
             });
           }
-          if (hasSummaryLabels) {
-            // LUI-TSK-0065 (próxima fase). Por ahora avisamos.
-            logger.info(
-              { count: cfg.summaryLabels.length },
-              'Gmail digest: SUMMARY channel configurado pero no implementado todavía (LUI-TSK-0065)',
-            );
+          if (digestRunner && hasSummaryLabels) {
+            await digestRunner.runSummaryChannel({
+              summaryLabels: cfg.summaryLabels,
+              maxResults: config.gmailDigest.maxResults,
+              notify: (text) => notificationService.sendNotification({ text, level: 'info' }),
+            });
           }
 
           // Fallback legacy si no hay etiquetas configuradas.

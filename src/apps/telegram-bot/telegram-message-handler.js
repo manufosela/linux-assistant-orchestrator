@@ -53,7 +53,7 @@ const INBOX_CATEGORY_EMOJI = {
   revisar: '🤔',
 };
 
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, gmailLabels, gmailDigest, gmailDigestConfig, digestConfigStore, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, youtubeService, mediaTranscriber, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, gmailLabels, gmailDigest, gmailDigestConfig, digestConfigStore, summaryStore, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, youtubeService, mediaTranscriber, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -520,6 +520,44 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     } catch (error) {
       logger.warn({ chatId, err: error.message }, '/correo failed');
       await indicator.finish(`❌ No pude consultar el correo: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+    }
+  });
+
+  router.register('/resumen', async (message) => {
+    const chatId = message.chat.id;
+    if (!summaryStore) {
+      await bot.sendMessage(chatId, 'Resúmenes no disponibles.');
+      return;
+    }
+    const id = extractArgs(message.text ?? '').trim().toLowerCase();
+    if (!id) {
+      await bot.sendMessage(
+        chatId,
+        'Uso: <code>/resumen &lt;id&gt;</code>\nLos IDs te llegan en el digest diario del canal RESUMEN.',
+        { parse_mode: 'HTML' },
+      );
+      return;
+    }
+    try {
+      const entry = await summaryStore.get(id);
+      if (!entry) {
+        await bot.sendMessage(
+          chatId,
+          `❌ No tengo el resumen <code>${escapeHtml(id)}</code>. Puede haber expirado (TTL 7 días) o el id no es correcto.`,
+          { parse_mode: 'HTML' },
+        );
+        return;
+      }
+      const text =
+        `📚 <b>${escapeHtml(entry.subject || '(sin asunto)')}</b>\n` +
+        `<i>${escapeHtml(entry.from || '(?)')}</i>\n` +
+        (entry.labelName ? `<i>etiqueta: ${escapeHtml(entry.labelName)}</i>\n` : '') +
+        '\n' +
+        escapeHtml(entry.summary);
+      await bot.sendMessage(chatId, text, { parse_mode: 'HTML', disable_web_page_preview: true });
+    } catch (error) {
+      logger.warn({ chatId, err: error.message, id }, '/resumen failed');
+      await bot.sendMessage(chatId, `❌ ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
     }
   });
 
@@ -1030,6 +1068,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '/etiqueta — sin args lista tus etiquetas; <code>/etiqueta &lt;query&gt; | &lt;label&gt;</code> aplica una etiqueta a los mensajes que matchean',
       '/digest [query] — lista los no-leídos del filtro (rápido). Añade <code>resumir</code> para que la IA los resuma: <code>/digest resumir from:github</code>',
       '/digest-config — gestiona las etiquetas que recibes a diario. <code>/digest-config lista add Trabajo</code> · <code>/digest-config resumen del Estudio</code>',
+      '/resumen &lt;id&gt; — abre un resumen del digest RESUMEN. El id viene en el índice diario (TTL 7 días).',
       '/agenda [hoy|mañana|semana|próximo] — eventos del calendario',
       '/drive [buscar &lt;texto&gt;] — listar raíz o buscar en Drive (solo lectura)',
       '/guarda &lt;url&gt; — capturar URL al inbox (también auto-detectado si el mensaje empieza por http(s)://)',
