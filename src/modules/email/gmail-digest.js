@@ -2,6 +2,11 @@ import { google } from 'googleapis';
 
 const MAX_RESULTS_HARD_CAP = 50;
 const UNREAD_LABEL_ID = 'UNREAD';
+// Resumir más de 5-6 correos en un solo prompt agota maxTokens en el modelo
+// local rápido (genera un texto largo y se corta a mitad). Procesamos en
+// bloques pequeños y concatenamos: cada llamada es más rápida y el texto
+// completo está garantizado.
+const SUMMARY_CHUNK_SIZE = 5;
 
 /**
  * Daily Gmail digest (LUI-TSK-0031). Dado un filtro Gmail, lista correos no
@@ -140,33 +145,68 @@ export function createGmailDigest({ googleAuth, llmService, gmailLabels, logger,
     }
   }
 
+  /**
+   * Resume los correos. Para no saturar el modelo local (que en CPU se
+   * arrastra con prompts grandes y trunca el output al alcanzar maxTokens),
+   * partimos los correos en bloques de SUMMARY_CHUNK_SIZE y resumimos cada
+   * bloque por separado. Luego concatenamos los resúmenes parciales sin
+   * volver a invocar al LLM — el formato ya viene normalizado.
+   *
+   * Subimos maxTokens explícitamente a 2048 para que el modelo termine
+   * cada bloque (el default 1024 cortaba el texto a mitad del segundo
+   * correo en bloques de 20).
+   */
   async function summarise(emails) {
     if (!llmService) {
       return formatPlainList(emails);
     }
-    const items = emails
-      .map((e, i) => `${i + 1}. De: ${e.from}\n   Asunto: ${e.subject}\n   Fragmento: ${e.snippet}`)
-      .join('\n\n');
-
-    const prompt =
-      `Resume estos ${emails.length} correos en español, en estilo conciso y útil para una persona que ` +
-      'recibe a diario contenido de estudio (cursos, newsletters, paper, etc.). Una línea por correo, ' +
-      'con remitente y la idea clave (lo accionable o lo importante). Sin frases introductorias, sin ' +
-      'inventar datos que no aparezcan en el fragmento. Empieza con un titular agregado de 1 línea ' +
-      'resumiendo qué tipo de contenido predomina.\n\n' +
-      `${items}`;
+    const chunks = chunkArray(emails, SUMMARY_CHUNK_SIZE);
     try {
-      const text = await llmService.generateText(prompt, {
-        module: 'gmail-digest',
-        operation: 'summarize',
-        private: true,
-      });
-      const clean = String(text ?? '').trim();
-      return clean || formatPlainList(emails);
+      const summaries = [];
+      for (let i = 0; i < chunks.length; i += 1) {
+        const partial = await summariseChunk(chunks[i], i, chunks.length);
+        summaries.push(partial);
+      }
+      const merged = summaries.join('\n').trim();
+      return merged || formatPlainList(emails);
     } catch (error) {
       logger?.warn({ err: error?.message }, 'Gmail digest: LLM summary failed, falling back to list');
       return formatPlainList(emails);
     }
+  }
+
+  async function summariseChunk(emails, chunkIndex, chunkTotal) {
+    const items = emails
+      .map((e, i) => `${i + 1}. De: ${e.from}\n   Asunto: ${e.subject}\n   Fragmento: ${e.snippet}`)
+      .join('\n\n');
+
+    const isFirst = chunkIndex === 0;
+    const headerHint = isFirst && chunkTotal === 1
+      ? 'Empieza con un titular agregado de 1 línea resumiendo qué tipo de contenido predomina, y luego una línea por correo.'
+      : 'Devuelve UNA SOLA LÍNEA por correo. No añadas titular ni cabecera, sólo las líneas.';
+
+    const prompt =
+      `Resume estos ${emails.length} correos en español, en estilo conciso y útil para una persona que ` +
+      'recibe a diario contenido de estudio (cursos, newsletters, papers, etc.). Una línea por correo, ' +
+      'con remitente y la idea clave (lo accionable o lo importante). Sin frases introductorias, sin ' +
+      `inventar datos que no aparezcan en el fragmento. ${headerHint}\n\n${items}`;
+
+    const text = await llmService.generateText(prompt, {
+      module: 'gmail-digest',
+      operation: 'summarize',
+      private: true,
+      maxTokens: 2048,
+      temperature: 0.3,
+    });
+    return String(text ?? '').trim();
+  }
+
+  function chunkArray(arr, size) {
+    const out = [];
+    for (let i = 0; i < arr.length; i += size) {
+      out.push(arr.slice(i, i + size));
+    }
+    return out;
   }
 
   function formatPlainList(emails) {
