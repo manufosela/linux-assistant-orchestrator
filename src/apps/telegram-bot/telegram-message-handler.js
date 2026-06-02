@@ -530,7 +530,12 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       return;
     }
     const args = extractArgs(message.text ?? '').trim();
-    const query = args || gmailDigestConfig?.query || 'is:unread label:Estudio';
+    // Por defecto el digest opera sobre correos no-leídos (caso frecuente).
+    // Si el usuario añade una query custom y NO ha incluido un operador
+    // explícito de leído/no-leído, completamos con is:unread. Si quiere
+    // incluir leídos, basta con poner is:read o in:all.
+    const baseQuery = args || gmailDigestConfig?.query || 'is:unread label:Estudio';
+    const query = withUnreadDefault(baseQuery);
     const maxResults = gmailDigestConfig?.maxResults ?? 20;
     const markAsRead = false; // /digest manual = solo previsualizar, no tocar el estado
     const indicator = await createThinkingIndicator(bot, chatId, { text: '📚 Generando digest…', logger });
@@ -1223,6 +1228,22 @@ function formatEmailReply(result) {
     return `${i + 1}. <b>${subject}</b>\n   <i>${from}</i>${snippet ? `\n   ${snippet}` : ''}`;
   });
   return `${heading}\n\n${lines.join('\n\n')}`;
+}
+
+/**
+ * Si la query Gmail no incluye un operador explícito de estado de lectura
+ * (is:unread, is:read, in:anywhere, in:all), añade `is:unread` para que
+ * el comportamiento por defecto sea "lo nuevo". Devuelve la query tal cual
+ * si ya viene con uno de esos operadores.
+ *
+ * @param {string} query
+ */
+function withUnreadDefault(query) {
+  if (!query) return 'is:unread';
+  if (/\b(is:unread|is:read|in:anywhere|in:all)\b/i.test(query)) {
+    return query;
+  }
+  return `${query} is:unread`;
 }
 
 /**
