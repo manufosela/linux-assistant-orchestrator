@@ -53,7 +53,7 @@ const INBOX_CATEGORY_EMOJI = {
   revisar: '🤔',
 };
 
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, gmailLabels, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, youtubeService, mediaTranscriber, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, gmailLabels, gmailDigest, gmailDigestConfig, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, youtubeService, mediaTranscriber, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -523,6 +523,40 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     }
   });
 
+  router.register('/digest', async (message) => {
+    const chatId = message.chat.id;
+    if (!gmailDigest) {
+      await bot.sendMessage(chatId, 'Gmail no configurado. Ejecuta `luis google login` primero.');
+      return;
+    }
+    const args = extractArgs(message.text ?? '').trim();
+    const query = args || gmailDigestConfig?.query || 'is:unread label:Estudio';
+    const maxResults = gmailDigestConfig?.maxResults ?? 20;
+    const markAsRead = false; // /digest manual = solo previsualizar, no tocar el estado
+    const indicator = await createThinkingIndicator(bot, chatId, { text: '📚 Generando digest…', logger });
+    try {
+      let sent = false;
+      const result = await gmailDigest.dispatch({
+        query,
+        maxResults,
+        markAsRead,
+        notify: async (text) => {
+          await indicator.finish(text, { parse_mode: 'HTML', disable_web_page_preview: true });
+          sent = true;
+        },
+      });
+      if (!sent && result.count === 0) {
+        await indicator.finish(
+          `📭 No hay correos sin leer que matcheen <code>${escapeHtml(query)}</code>.`,
+          { parse_mode: 'HTML' },
+        );
+      }
+    } catch (error) {
+      logger.warn({ chatId, err: error.message }, '/digest failed');
+      await indicator.finish(`❌ No pude generar el digest: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+    }
+  });
+
   router.register('/etiqueta', async (message) => {
     const chatId = message.chat.id;
     if (!gmailLabels) {
@@ -952,6 +986,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '/anuncia &lt;destino&gt; &lt;texto&gt; — anuncio en Alexa (o sin destino para elegir)',
       '/correo [hoy|de &lt;persona&gt;] — correos no leídos de hoy o de un remitente',
       '/etiqueta — sin args lista tus etiquetas; <code>/etiqueta &lt;query&gt; | &lt;label&gt;</code> aplica una etiqueta a los mensajes que matchean',
+      '/digest [query] — genera un resumen LLM del filtro de estudio (o el query dado), sin marcar como leído',
       '/agenda [hoy|mañana|semana|próximo] — eventos del calendario',
       '/drive [buscar &lt;texto&gt;] — listar raíz o buscar en Drive (solo lectura)',
       '/guarda &lt;url&gt; — capturar URL al inbox (también auto-detectado si el mensaje empieza por http(s)://)',
