@@ -529,33 +529,52 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       await bot.sendMessage(chatId, 'Gmail no configurado. Ejecuta `luis google login` primero.');
       return;
     }
-    const args = extractArgs(message.text ?? '').trim();
-    // Por defecto el digest opera sobre correos no-leídos (caso frecuente).
-    // Si el usuario añade una query custom y NO ha incluido un operador
-    // explícito de leído/no-leído, completamos con is:unread. Si quiere
-    // incluir leídos, basta con poner is:read o in:all.
-    const baseQuery = args || gmailDigestConfig?.query || 'is:unread label:Estudio';
+    const raw = extractArgs(message.text ?? '').trim();
+    // Si el primer token es "resumir" / "resume" / "summary", el resto es la
+    // query y SÍ pasamos por el LLM (modo digest completo, lento). Si no,
+    // modo rápido: solo lista los correos sin tocar IA.
+    const summaryMatch = raw.match(/^(?:resumir|resumen|resume|summary)\b\s*(.*)$/i);
+    const wantsSummary = Boolean(summaryMatch);
+    const queryArg = summaryMatch ? summaryMatch[1].trim() : raw;
+    const baseQuery = queryArg || gmailDigestConfig?.query || 'is:unread label:Estudio';
     const query = withUnreadDefault(baseQuery);
     const maxResults = gmailDigestConfig?.maxResults ?? 20;
-    const markAsRead = false; // /digest manual = solo previsualizar, no tocar el estado
-    const indicator = await createThinkingIndicator(bot, chatId, { text: '📚 Generando digest…', logger });
+
+    const indicatorText = wantsSummary ? '📚 Generando resumen con IA…' : '📋 Listando correos…';
+    const indicator = await createThinkingIndicator(bot, chatId, { text: indicatorText, logger });
+
     try {
-      let sent = false;
-      const result = await gmailDigest.dispatch({
-        query,
-        maxResults,
-        markAsRead,
-        notify: async (text) => {
-          await indicator.finish(text, { parse_mode: 'HTML', disable_web_page_preview: true });
-          sent = true;
-        },
-      });
-      if (!sent && result.count === 0) {
+      if (wantsSummary) {
+        let sent = false;
+        const result = await gmailDigest.dispatch({
+          query,
+          maxResults,
+          markAsRead: false, // /digest manual = preview, no marca leído
+          notify: async (text) => {
+            await indicator.finish(text, { parse_mode: 'HTML', disable_web_page_preview: true });
+            sent = true;
+          },
+        });
+        if (!sent && result.count === 0) {
+          await indicator.finish(
+            `📭 No hay correos que matcheen <code>${escapeHtml(query)}</code>.`,
+            { parse_mode: 'HTML' },
+          );
+        }
+        return;
+      }
+
+      // Modo rápido: solo lista, sin LLM
+      const list = await gmailDigest.fetchList({ query, maxResults });
+      if (list.emails.length === 0) {
         await indicator.finish(
-          `📭 No hay correos sin leer que matcheen <code>${escapeHtml(query)}</code>.`,
+          `📭 No hay correos que matcheen <code>${escapeHtml(query)}</code>.`,
           { parse_mode: 'HTML' },
         );
+        return;
       }
+      const reply = formatPlainEmailList(list, query);
+      await indicator.finish(reply, { parse_mode: 'HTML', disable_web_page_preview: true });
     } catch (error) {
       logger.warn({ chatId, err: error.message }, '/digest failed');
       await indicator.finish(`❌ No pude generar el digest: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
@@ -991,7 +1010,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '/anuncia &lt;destino&gt; &lt;texto&gt; — anuncio en Alexa (o sin destino para elegir)',
       '/correo [hoy|de &lt;persona&gt;] — correos no leídos de hoy o de un remitente',
       '/etiqueta — sin args lista tus etiquetas; <code>/etiqueta &lt;query&gt; | &lt;label&gt;</code> aplica una etiqueta a los mensajes que matchean',
-      '/digest [query] — genera un resumen LLM del filtro de estudio (o el query dado), sin marcar como leído',
+      '/digest [query] — lista los no-leídos del filtro (rápido). Añade <code>resumir</code> para que la IA los resuma: <code>/digest resumir from:github</code>',
       '/agenda [hoy|mañana|semana|próximo] — eventos del calendario',
       '/drive [buscar &lt;texto&gt;] — listar raíz o buscar en Drive (solo lectura)',
       '/guarda &lt;url&gt; — capturar URL al inbox (también auto-detectado si el mensaje empieza por http(s)://)',
@@ -1228,6 +1247,42 @@ function formatEmailReply(result) {
     return `${i + 1}. <b>${subject}</b>\n   <i>${from}</i>${snippet ? `\n   ${snippet}` : ''}`;
   });
   return `${heading}\n\n${lines.join('\n\n')}`;
+}
+
+/**
+ * Render rápido de una lista de correos para /digest (modo lista, sin IA).
+ *
+ * @param {{ emails: Array<{ id: string, from: string, subject: string, date: string, snippet: string }>, truncated: boolean }} list
+ * @param {string} query
+ * @returns {string}
+ */
+function formatPlainEmailList(list, query) {
+  const total = list.emails.length;
+  const heading = `📋 <b>${total} correo${total === 1 ? '' : 's'}</b> (${escapeHtml(query)}):`;
+  const lines = list.emails.map((e, i) => {
+    const subj = escapeHtml(e.subject || '(sin asunto)');
+    const from = escapeHtml(stripFromName(e.from));
+    return `${i + 1}. <b>${subj}</b>\n   <i>${from}</i>`;
+  });
+  const tail = list.truncated ? '\n\n<i>(truncado al máximo configurado)</i>' : '';
+  const footer =
+    '\n\n💡 Para resumen con IA: <code>/digest resumir' +
+    (query ? ` ${escapeHtml(query.replace(/\s*is:unread\b/i, '').trim())}` : '') +
+    '</code>';
+  return `${heading}\n\n${lines.join('\n\n')}${tail}${footer}`;
+}
+
+/**
+ * Extrae el nombre/email legible de un header `From` ("Foo <foo@bar.com>"
+ * → "Foo"; si no hay nombre, devuelve el email entero).
+ *
+ * @param {string} raw
+ */
+function stripFromName(raw) {
+  if (!raw) return '(desconocido)';
+  const m = raw.match(/^\s*"?([^"<]+?)"?\s*<[^>]+>\s*$/);
+  if (m) return m[1].trim();
+  return raw.trim();
 }
 
 /**
