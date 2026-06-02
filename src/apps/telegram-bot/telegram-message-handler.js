@@ -536,8 +536,10 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     const summaryMatch = raw.match(/^(?:resumir|resumen|resume|summary)\b\s*(.*)$/i);
     const wantsSummary = Boolean(summaryMatch);
     const queryArg = summaryMatch ? summaryMatch[1].trim() : raw;
-    const baseQuery = queryArg || gmailDigestConfig?.query || 'is:unread label:Estudio';
-    const query = withUnreadDefault(baseQuery);
+    // /digest manual: sin args = todos los no-leídos. Si el usuario pone una
+    // query, se respeta y se completa con is:unread si lo olvida. El filtro
+    // de etiqueta del cron (gmailDigestConfig.query) SÓLO aplica al diario.
+    const query = queryArg ? withUnreadDefault(queryArg) : 'is:unread';
     const maxResults = gmailDigestConfig?.maxResults ?? 20;
 
     const indicatorText = wantsSummary ? '📚 Generando resumen con IA…' : '📋 Listando correos…';
