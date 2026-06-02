@@ -90,6 +90,8 @@ describe('createGoogleAuth', () => {
     assert.ok(url.includes('access_type=offline'));
     assert.ok(url.includes('prompt=consent'));
     assert.ok(decodeURIComponent(url).includes('https://www.googleapis.com/auth/gmail.readonly'));
+    assert.ok(decodeURIComponent(url).includes('https://www.googleapis.com/auth/gmail.modify'),
+      'gmail.modify requerido para etiquetar correos (LUI-TSK-0030)');
     assert.ok(decodeURIComponent(url).includes('https://www.googleapis.com/auth/calendar.readonly'));
     assert.ok(url.includes(encodeURIComponent('fake-client.apps.googleusercontent.com')));
   });

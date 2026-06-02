@@ -23,6 +23,7 @@ import { createClusterHealthChecker } from '../../../modules/cluster/cluster-hea
 import { createClusterHistoryStore } from '../../../modules/cluster/cluster-history-store.js';
 import { createClusterStatusService } from '../../../modules/cluster/cluster-status-service.js';
 import { createGmailClient } from '../../../modules/email/gmail-client.js';
+import { createGmailLabels } from '../../../modules/email/gmail-labels.js';
 import { createGoogleCalendarClient } from '../../../modules/calendar/google-calendar-client.js';
 import { createGoogleDriveClient } from '../../../modules/drive/google-drive-client.js';
 import { createWhisperClient } from '../../../modules/whisper/whisper-client.js';
@@ -145,6 +146,7 @@ async function main() {
 
   let googleAuth;
   let gmailClient;
+  let gmailLabels;
   let calendarClient;
   let driveClient;
   if (config.google.credentialsPath && config.google.tokensPath) {
@@ -154,6 +156,7 @@ async function main() {
       logger,
     });
     gmailClient = createGmailClient({ googleAuth, llmService, logger });
+    gmailLabels = createGmailLabels({ googleAuth, llmService, logger });
     calendarClient = createGoogleCalendarClient({ googleAuth, logger });
     driveClient = createGoogleDriveClient({ googleAuth, logger });
   }
@@ -237,6 +240,7 @@ async function main() {
     googleAuth,
     clusterStatus,
     gmailClient,
+    gmailLabels,
     calendarClient,
     driveClient,
     youtubeService,
