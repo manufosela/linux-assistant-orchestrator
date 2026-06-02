@@ -131,6 +131,27 @@ describe('createGmailDigest.build', () => {
     assert.match(result.summary, /x@y\.com/);
   });
 
+  it('divide en chunks de máximo 5 correos cuando hay más (evita truncamiento del LLM)', async () => {
+    const ids = Array.from({ length: 12 }, (_, i) => `m${i}`);
+    const messages = Object.fromEntries(
+      ids.map((id, i) => [id, { from: `a${i}`, subject: `s${i}`, date: '', snippet: 't' }]),
+    );
+    const { api } = buildGmailStub({ ids, messages });
+    const llm = fakeLlm('parcial');
+    const digest = createGmailDigest({
+      googleAuth: { getClient: async () => ({}) },
+      gmailFactory: () => api,
+      llmService: llm,
+    });
+    await digest.build({ query: 'q', maxResults: 12 });
+    // 12 correos en chunks de 5 → 3 llamadas al LLM (5+5+2)
+    assert.equal(llm.calls.length, 3);
+    // Y cada llamada lleva maxTokens elevado, no el default
+    for (const call of llm.calls) {
+      assert.equal(call.meta.maxTokens, 2048, 'maxTokens debe estar elevado para no truncar');
+    }
+  });
+
   it('truncated=true si llega al maxResults configurado', async () => {
     const { api } = buildGmailStub({
       ids: ['a', 'b'],
