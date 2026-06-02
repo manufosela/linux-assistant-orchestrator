@@ -38,13 +38,14 @@ export function createGmailDigest({ googleAuth, llmService, gmailLabels, logger,
   }
 
   /**
-   * Lee mensajes que matcheen `query`, los resume con el LLM y devuelve
-   * el texto + ids. No modifica el estado de los mensajes.
+   * Lee SÓLO la metadata de los mensajes que matcheen `query` (Gmail API).
+   * No invoca LLM. Es la operación rápida: completa en segundos incluso con
+   * 20 correos.
    *
    * @param {{ query: string, maxResults?: number }} opts
-   * @returns {Promise<{ ids: string[], emails: EmailRow[], summary: string, truncated: boolean }>}
+   * @returns {Promise<{ ids: string[], emails: EmailRow[], truncated: boolean }>}
    */
-  async function build({ query, maxResults = 20 }) {
+  async function fetchList({ query, maxResults = 20 }) {
     const q = String(query ?? '').trim();
     if (!q) throw new Error('Indica una query Gmail para el digest.');
     const cap = Math.min(Math.max(1, maxResults), MAX_RESULTS_HARD_CAP);
@@ -58,23 +59,35 @@ export function createGmailDigest({ googleAuth, llmService, gmailLabels, logger,
     const items = listRes?.data?.messages ?? [];
     const truncated = items.length === cap;
     if (items.length === 0) {
-      logger?.info({ query: q }, 'Gmail digest: 0 mensajes');
-      return { ids: [], emails: [], summary: '', truncated: false };
+      logger?.info({ query: q }, 'Gmail digest fetchList: 0 mensajes');
+      return { ids: [], emails: [], truncated: false };
     }
 
     const emails = await Promise.all(items.map((m) => fetchOne(api, m.id)));
     const valid = emails.filter(Boolean);
-    const summary = await summarise(valid);
-    logger?.info(
-      { query: q, count: valid.length, truncated },
-      'Gmail digest: built',
-    );
+    logger?.info({ query: q, count: valid.length, truncated }, 'Gmail digest fetchList: ok');
     return {
       ids: valid.map((e) => e.id),
       emails: valid,
-      summary,
       truncated,
     };
+  }
+
+  /**
+   * Lee mensajes que matcheen `query`, los resume con el LLM y devuelve
+   * el texto + ids. No modifica el estado de los mensajes.
+   *
+   * @param {{ query: string, maxResults?: number }} opts
+   * @returns {Promise<{ ids: string[], emails: EmailRow[], summary: string, truncated: boolean }>}
+   */
+  async function build({ query, maxResults = 20 }) {
+    const list = await fetchList({ query, maxResults });
+    if (list.emails.length === 0) {
+      return { ...list, summary: '' };
+    }
+    const summary = await summarise(list.emails);
+    logger?.info({ query, count: list.emails.length }, 'Gmail digest built (with summary)');
+    return { ...list, summary };
   }
 
   /**
@@ -223,7 +236,7 @@ export function createGmailDigest({ googleAuth, llmService, gmailLabels, logger,
     return `${heading}\n\n${escapeHtmlSafe(result.summary)}${tail}`;
   }
 
-  return { build, dispatch };
+  return { build, dispatch, fetchList };
 }
 
 /**
@@ -287,6 +300,7 @@ function escapeHtmlSafe(text) {
 
 /**
  * @typedef {Object} GmailDigestClient
+ * @property {(opts: { query: string, maxResults?: number }) => Promise<{ ids: string[], emails: EmailRow[], truncated: boolean }>} fetchList
  * @property {(opts: { query: string, maxResults?: number }) => Promise<{ ids: string[], emails: EmailRow[], summary: string, truncated: boolean }>} build
  * @property {(opts: { query: string, maxResults?: number, markAsRead?: boolean, notify: (text: string) => Promise<void> }) => Promise<{ count: number, notified: boolean, markedAsRead: number }>} dispatch
  */
