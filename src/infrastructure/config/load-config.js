@@ -141,6 +141,10 @@ export function loadConfig(envPath = '.env') {
       allowCloudLlm: process.env.ALLOW_CLOUD_LLM === 'true',
       local: {
         baseUrl: process.env.LOCAL_LLM_BASE_URL ?? 'http://localhost:11434',
+        // Backup opcional (LUI-TSK-0010). Si está, el provider intenta el
+        // primario y, si falla o health check no responde en 5s, usa el
+        // backup. Cuando el primario vuelva, próxima petición lo usa.
+        backupUrl: process.env.LOCAL_LLM_BACKUP_URL ?? '',
         model: process.env.LOCAL_LLM_MODEL ?? '',
         apiKey: process.env.LOCAL_LLM_API_KEY ?? '',
         timeoutMs: Number(process.env.LOCAL_LLM_TIMEOUT_MS ?? 120000),

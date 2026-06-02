@@ -1,5 +1,6 @@
 import { createLocalLlmProvider } from './local-llm-provider.js';
 import { createCloudLlmProvider } from './cloud-llm-provider.js';
+import { createFailoverLlmProvider } from './failover-llm-provider.js';
 
 /**
  * Creates an LLM provider based on configuration.
@@ -15,8 +16,17 @@ export function createLlmProvider(config, logger) {
   const { provider, allowCloudLlm, local, cloud } = config;
 
   if (provider === 'local') {
+    const primary = createLocalLlmProvider(local, logger);
+    if (local.backupUrl) {
+      const backup = createLocalLlmProvider({ ...local, baseUrl: local.backupUrl }, logger);
+      logger.info(
+        { provider: 'local', baseUrl: local.baseUrl, backupUrl: local.backupUrl, model: local.model },
+        'Using local LLM provider with failover backup',
+      );
+      return createFailoverLlmProvider({ primary, backup, logger });
+    }
     logger.info({ provider: 'local', baseUrl: local.baseUrl, model: local.model }, 'Using local LLM provider');
-    return createLocalLlmProvider(local, logger);
+    return primary;
   }
 
   if (provider === 'cloud') {
