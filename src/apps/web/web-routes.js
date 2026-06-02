@@ -67,6 +67,66 @@ export function registerWebRoutes({ registry, llmService, statusService, rulesRe
     }
   });
 
+  registry.registerStream('POST', '/api/ask', async (req, res, body) => {
+    const prompt = typeof body?.prompt === 'string' ? body.prompt.trim() : '';
+    if (!prompt) {
+      writeSseHead(res);
+      writeSseError(res, 'Missing prompt');
+      res.end();
+      return;
+    }
+    // Prometheus shortcut también vale en streaming: lo emitimos como un único
+    // delta y cerramos, así el cliente no nota diferencia con un stream real.
+    const prometheusReply = await maybeAnswerFromPrometheus(prompt, prometheusClient, logger);
+    if (prometheusReply) {
+      writeSseHead(res);
+      writeSseDelta(res, prometheusReply.body?.text ?? '');
+      writeSseDone(res);
+      res.end();
+      return;
+    }
+    await streamAndEmit({
+      res,
+      messages: [{ role: 'user', content: prompt }],
+      options: { module: 'web', operation: 'ask-stream', private: true },
+      llmService,
+      req,
+      logger,
+    });
+  });
+
+  registry.registerStream('POST', '/api/chat', async (req, res, body) => {
+    const messages = Array.isArray(body?.messages) ? body.messages : null;
+    if (!messages || messages.length === 0 || !messages.every(isValidMessage)) {
+      writeSseHead(res);
+      writeSseError(res, 'Invalid messages');
+      res.end();
+      return;
+    }
+    const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user');
+    const prometheusReply = await maybeAnswerFromPrometheus(lastUserMessage?.content, prometheusClient, logger);
+    if (prometheusReply) {
+      writeSseHead(res);
+      writeSseDelta(res, prometheusReply.body?.text ?? '');
+      writeSseDone(res);
+      res.end();
+      return;
+    }
+    await streamAndEmit({
+      res,
+      messages,
+      options: {
+        module: 'web',
+        operation: 'chat-stream',
+        private: true,
+        model: typeof body?.model === 'string' && body.model ? body.model : undefined,
+      },
+      llmService,
+      req,
+      logger,
+    });
+  });
+
   registry.register('POST', '/api/chat', async (_req, body) => {
     const messages = Array.isArray(body?.messages) ? body.messages : null;
     if (!messages || messages.length === 0) {
@@ -338,6 +398,60 @@ function isValidMessage(msg) {
 }
 
 /**
+ * Streams chunks from llmService.chatStream as SSE events to the open `res`.
+ * Handles client aborts (req close) and propagation of stream errors. The
+ * client will see one `event: error` followed by the connection closing.
+ */
+async function streamAndEmit({ res, messages, options, llmService, req, logger }) {
+  writeSseHead(res);
+  // Heartbeat: SSE proxies pueden cerrar sockets ociosos. Un comment cada
+  // 15 s mantiene la conexión viva incluso si el modelo está pensando.
+  const heartbeat = setInterval(() => {
+    try { res.write(': keep-alive\n\n'); } catch { /* socket muerto */ }
+  }, 15_000);
+
+  const ac = new AbortController();
+  const onClose = () => ac.abort();
+  req.on('close', onClose);
+
+  try {
+    for await (const chunk of llmService.chatStream(messages, { ...options, signal: ac.signal })) {
+      if (ac.signal.aborted) break;
+      writeSseDelta(res, chunk);
+    }
+    if (!ac.signal.aborted) writeSseDone(res);
+  } catch (error) {
+    logger?.warn({ err: error?.message }, 'LLM stream failed');
+    writeSseError(res, error?.message ?? 'LLM stream error');
+  } finally {
+    clearInterval(heartbeat);
+    req.off('close', onClose);
+    try { res.end(); } catch { /* ignore */ }
+  }
+}
+
+function writeSseHead(res) {
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache, no-transform',
+    connection: 'keep-alive',
+    'x-accel-buffering': 'no', // disable nginx/proxy buffering
+  });
+}
+
+function writeSseDelta(res, text) {
+  res.write(`event: delta\ndata: ${JSON.stringify({ text })}\n\n`);
+}
+
+function writeSseDone(res) {
+  res.write('event: done\ndata: {}\n\n');
+}
+
+function writeSseError(res, message) {
+  res.write(`event: error\ndata: ${JSON.stringify({ error: message })}\n\n`);
+}
+
+/**
  * @typedef {Object} RouteResponse
  * @property {number} status
  * @property {object | string} body
@@ -353,4 +467,5 @@ function isValidMessage(msg) {
 /**
  * @typedef {Object} WebRouteRegistry
  * @property {(method: string, path: string, handler: WebRouteHandler) => void} register
+ * @property {(method: string, path: string, handler: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, body: any) => Promise<void>) => void} registerStream
  */

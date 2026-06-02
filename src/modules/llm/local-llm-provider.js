@@ -118,7 +118,106 @@ export function createLocalLlmProvider(config, logger) {
     }
   }
 
-  return { generateText, chat, checkHealth };
+  /**
+   * Streaming variante de `chat`. Async generator que emite chunks de texto
+   * (deltas) tal cual los devuelve el endpoint OpenAI-compatible con
+   * `stream: true`. NO aplica privacy guards: el caller (llm-service) ya las
+   * comprueba antes de invocarnos.
+   *
+   * @param {{
+   *   messages: Array<{ role: 'system'|'user'|'assistant', content: string }>,
+   *   maxTokens?: number,
+   *   temperature?: number,
+   *   model?: string,
+   *   metadata: import('../../../types/llm.js').LlmRequestMetadata,
+   *   signal?: AbortSignal,
+   * }} request
+   * @returns {AsyncGenerator<string, void, void>}
+   */
+  async function* chatStream(request) {
+    const { messages, maxTokens = 1024, temperature = 0.7, metadata, signal } = request;
+    const model = request.model ?? config.model;
+
+    logger.info(
+      {
+        module: metadata.module,
+        operation: metadata.operation,
+        provider: 'local',
+        model,
+        turns: messages.length,
+        streaming: true,
+      },
+      'LLM chat stream request',
+    );
+
+    const requestBody = {
+      model,
+      messages,
+      max_tokens: maxTokens,
+      temperature,
+      stream: true,
+    };
+
+    const url = `${baseUrl}/v1/chat/completions`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...headers,
+      },
+      body: JSON.stringify(requestBody),
+      signal,
+    });
+
+    if (!response.ok || !response.body) {
+      const detail = await safeReadText(response);
+      throw new Error(`LLM stream HTTP ${response.status}: ${detail.slice(0, 200)}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let nlIndex;
+        while ((nlIndex = buffer.indexOf('\n')) !== -1) {
+          const line = buffer.slice(0, nlIndex).trim();
+          buffer = buffer.slice(nlIndex + 1);
+          if (!line || !line.startsWith('data:')) continue;
+          const payload = line.slice(5).trim();
+          if (payload === '[DONE]') return;
+          try {
+            const parsed = JSON.parse(payload);
+            const delta = parsed?.choices?.[0]?.delta?.content;
+            if (typeof delta === 'string' && delta.length > 0) {
+              yield delta;
+            }
+          } catch (error) {
+            logger.debug({ err: error?.message, payload: payload.slice(0, 80) }, 'stream chunk parse failed');
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock?.();
+    }
+  }
+
+  return { generateText, chat, chatStream, checkHealth };
+}
+
+/**
+ * @param {Response} response
+ */
+async function safeReadText(response) {
+  try {
+    return await response.text();
+  } catch {
+    return '';
+  }
 }
 
 /**

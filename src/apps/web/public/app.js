@@ -162,16 +162,115 @@ async function runChatTurn(text) {
   conversation.push({ role: 'user', content: text });
   showChatStatus('Pensando…');
 
+  // Crea un mensaje del asistente vacío que iremos actualizando con cada
+  // chunk SSE. Si el navegador no soporta TextDecoderStream o algo falla en
+  // el camino, hacemos fallback a la llamada JSON tradicional.
+  const messageEl = appendMessage('assistant', '');
+  let accumulated = '';
+
   try {
-    const data = await apiCall('/api/chat', { method: 'POST', body: { messages: conversation } });
-    const reply = data.text ?? '(sin respuesta)';
-    conversation.push({ role: 'assistant', content: reply });
-    appendMessage('assistant', reply);
+    await streamChat(conversation, (chunk) => {
+      accumulated += chunk;
+      updateMessageContent(messageEl, accumulated);
+    });
+    if (!accumulated) accumulated = '(sin respuesta)';
+    conversation.push({ role: 'assistant', content: accumulated });
     showChatStatus('');
   } catch (error) {
+    // Si el stream falla muy al inicio (antes de cualquier delta), purgamos
+    // el mensaje vacío para no dejar burbujas huérfanas.
+    if (!accumulated) messageEl.remove();
     appendMessage('error', error.message);
     showChatStatus('Error en la respuesta.', true);
   }
+}
+
+/**
+ * Habla con /api/chat en modo SSE. Llama a onChunk con cada delta de texto.
+ * Resuelve cuando llega `event: done`, rechaza si llega `event: error` o si
+ * la conexión se cierra antes de tiempo.
+ *
+ * @param {Array<{role: string, content: string}>} messages
+ * @param {(chunk: string) => void} onChunk
+ */
+async function streamChat(messages, onChunk) {
+  const response = await fetch('/api/chat', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      Accept: 'text/event-stream',
+    },
+    body: JSON.stringify({ messages }),
+  });
+  if (!response.ok || !response.body) {
+    const txt = await response.text().catch(() => '');
+    throw new Error(`HTTP ${response.status}${txt ? ` — ${txt.slice(0, 120)}` : ''}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // SSE: eventos separados por línea en blanco (\n\n)
+    let sep;
+    while ((sep = buffer.indexOf('\n\n')) !== -1) {
+      const raw = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      const event = parseSseEvent(raw);
+      if (!event) continue;
+      if (event.type === 'delta' && typeof event.data?.text === 'string') {
+        onChunk(event.data.text);
+      } else if (event.type === 'error') {
+        throw new Error(event.data?.error ?? 'Error del stream');
+      } else if (event.type === 'done') {
+        return;
+      }
+    }
+  }
+}
+
+/**
+ * Parsea un bloque SSE crudo "event: foo\ndata: {...}" en {type, data}.
+ *
+ * @param {string} raw
+ */
+function parseSseEvent(raw) {
+  let type = 'message';
+  let dataStr = '';
+  for (const line of raw.split('\n')) {
+    if (line.startsWith(':')) continue; // comentario / heartbeat
+    if (line.startsWith('event:')) type = line.slice(6).trim();
+    else if (line.startsWith('data:')) dataStr += (dataStr ? '\n' : '') + line.slice(5).trim();
+  }
+  if (!dataStr) return { type, data: null };
+  try {
+    return { type, data: JSON.parse(dataStr) };
+  } catch {
+    return { type, data: { raw: dataStr } };
+  }
+}
+
+/**
+ * Re-renderiza el body de un mensaje del asistente con el contenido acumulado
+ * hasta ahora. Si hay luisMarkdown, lo usa para tener render incremental.
+ *
+ * @param {HTMLElement} wrapper
+ * @param {string} content
+ */
+function updateMessageContent(wrapper, content) {
+  const body = wrapper.querySelector('.message__body');
+  if (!body) return;
+  if (body.classList.contains('message__body--markdown') && window.luisMarkdown) {
+    body.innerHTML = window.luisMarkdown.render(content);
+  } else {
+    body.textContent = content;
+  }
+  els.conversation.scrollTop = els.conversation.scrollHeight;
 }
 
 /**
@@ -321,6 +420,7 @@ function appendMessage(role, content) {
   wrapper.appendChild(body);
   els.conversation.appendChild(wrapper);
   els.conversation.scrollTop = els.conversation.scrollHeight;
+  return wrapper;
 }
 
 /**
