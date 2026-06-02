@@ -34,6 +34,7 @@ import { createPrometheusClient } from './modules/prometheus/prometheus-client.j
 import { createGoogleAuth } from './modules/google/google-auth.js';
 import { createGmailClient } from './modules/email/gmail-client.js';
 import { createGmailLabels } from './modules/email/gmail-labels.js';
+import { createGmailDigest, scheduleDaily as scheduleDailyGmailDigest } from './modules/email/gmail-digest.js';
 import { createGoogleCalendarClient } from './modules/calendar/google-calendar-client.js';
 import { createGoogleDriveClient } from './modules/drive/google-drive-client.js';
 import { createWhisperClient } from './modules/whisper/whisper-client.js';
@@ -204,6 +205,7 @@ async function main() {
   let googleAuth;
   let gmailClient;
   let gmailLabels;
+  let gmailDigest;
   let calendarClient;
   let driveClient;
   if (config.google.credentialsPath && config.google.tokensPath) {
@@ -214,6 +216,7 @@ async function main() {
     });
     gmailClient = createGmailClient({ googleAuth, llmService, logger });
     gmailLabels = createGmailLabels({ googleAuth, llmService, logger });
+    gmailDigest = createGmailDigest({ googleAuth, llmService, gmailLabels, logger });
     calendarClient = createGoogleCalendarClient({ googleAuth, logger });
     driveClient = createGoogleDriveClient({ googleAuth, logger });
   }
@@ -364,6 +367,8 @@ async function main() {
       prometheusClient,
       gmailClient,
       gmailLabels,
+      gmailDigest,
+      gmailDigestConfig: config.gmailDigest,
       calendarClient,
       driveClient,
       inboxStore,
@@ -412,6 +417,41 @@ async function main() {
     clusterWatcher.start();
   } else {
     logger.info('Cluster watcher disabled (set CLUSTER_ENABLED=true to enable)');
+  }
+
+  // Gmail digest diario (LUI-TSK-0031). Off por defecto: requiere
+  // gmailDigest configurado, notificación habilitada y GMAIL_DIGEST_ENABLED=true.
+  if (config.gmailDigest.enabled && gmailDigest && telegramNotificationChannel) {
+    scheduleDailyGmailDigest({
+      scheduler,
+      hour: config.gmailDigest.hour,
+      minute: config.gmailDigest.minute,
+      logger,
+      run: async () => {
+        try {
+          await gmailDigest.dispatch({
+            query: config.gmailDigest.query,
+            maxResults: config.gmailDigest.maxResults,
+            markAsRead: config.gmailDigest.markAsRead,
+            notify: (text) => notificationService.sendNotification({ text, level: 'info' }),
+          });
+        } catch (error) {
+          logger.warn({ err: error?.message }, 'Gmail digest scheduled run failed');
+        }
+      },
+    });
+    logger.info(
+      {
+        hour: config.gmailDigest.hour,
+        minute: config.gmailDigest.minute,
+        query: config.gmailDigest.query,
+      },
+      'Gmail digest scheduled',
+    );
+  } else if (config.gmailDigest.enabled) {
+    logger.warn(
+      'Gmail digest enabled but Gmail or Telegram notification channel is not configured — skipped',
+    );
   }
 
   // Start download watcher

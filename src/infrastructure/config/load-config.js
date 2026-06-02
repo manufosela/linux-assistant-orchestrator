@@ -181,6 +181,21 @@ export function loadConfig(envPath = '.env') {
       tokensPath: process.env.GOOGLE_TOKENS_PATH ?? '',
     },
 
+    gmailDigest: {
+      // Diario de correos "estudio" → Telegram (LUI-TSK-0031). Off por defecto.
+      enabled: process.env.GMAIL_DIGEST_ENABLED === 'true',
+      // Query Gmail. Por defecto: no-leídos con label "Estudio".
+      query: process.env.GMAIL_DIGEST_QUERY ?? 'is:unread label:Estudio',
+      // Hora local de envío (HH:MM). Aleatorio dentro de la ventana ±5 min
+      // para evitar coincidencias exactas si el proceso rearranca.
+      hour: Number(process.env.GMAIL_DIGEST_HOUR ?? 8),
+      minute: Number(process.env.GMAIL_DIGEST_MINUTE ?? 30),
+      // Máx correos a incluir por digest. Más de eso = top-N por fecha y aviso.
+      maxResults: Number(process.env.GMAIL_DIGEST_MAX ?? 20),
+      // Si true, tras enviar el digest marca los correos como leídos.
+      markAsRead: process.env.GMAIL_DIGEST_MARK_READ !== 'false',
+    },
+
     planningGame: {
       baseUrl: process.env.PLANNING_GAME_BASE_URL ?? '',
       apiKey: process.env.PLANNING_GAME_API_KEY ?? '',
