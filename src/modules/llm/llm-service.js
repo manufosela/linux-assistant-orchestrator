@@ -120,7 +120,54 @@ export function createLlmService(provider, config, logger) {
     return status;
   }
 
-  return { generateText, chat, checkHealth };
+  /**
+   * Streaming versión de `chat`. Devuelve un async generator que yield chunks
+   * de texto a medida que el modelo los emite. Si el provider no soporta
+   * streaming (no implementa `chatStream`), hace fallback: ejecuta `chat()`
+   * y emite el texto completo en un único yield al final — el caller tiene
+   * un contrato consistente.
+   *
+   * @param {Array<{ role: 'system'|'user'|'assistant', content: string }>} messages
+   * @param {{ module?: string, operation?: string, private?: boolean, maxTokens?: number, temperature?: number, model?: string, signal?: AbortSignal }} [options]
+   * @returns {AsyncGenerator<string, void, void>}
+   */
+  async function* chatStream(messages, options = {}) {
+    const {
+      module: moduleName = 'unknown',
+      operation = 'chat-stream',
+      private: isPrivate = true,
+      maxTokens,
+      temperature,
+      model,
+      signal,
+    } = options;
+
+    if (isPrivate && config.provider === 'cloud' && !config.allowCloudLlm) {
+      throw new PrivateDataCloudError(moduleName, operation);
+    }
+
+    const correlationId = randomUUID();
+    const metadata = {
+      module: moduleName,
+      operation,
+      correlationId,
+      timestamp: new Date().toISOString(),
+    };
+
+    if (typeof provider.chatStream === 'function') {
+      yield* provider.chatStream({ messages, maxTokens, temperature, model, metadata, signal });
+      return;
+    }
+
+    // Fallback: si el provider no streama, llama a chat() y devuelve todo de golpe.
+    if (typeof provider.chat !== 'function') {
+      throw new Error('Configured LLM provider supports neither chat nor chatStream');
+    }
+    const response = await provider.chat({ messages, maxTokens, temperature, model, metadata });
+    if (response?.text) yield response.text;
+  }
+
+  return { generateText, chat, chatStream, checkHealth };
 }
 
 /**
@@ -143,5 +190,6 @@ export class PrivateDataCloudError extends Error {
  * @typedef {Object} LlmService
  * @property {(prompt: string, options?: object) => Promise<string>} generateText
  * @property {(messages: Array<{ role: string, content: string }>, options?: object) => Promise<string>} chat
+ * @property {(messages: Array<{ role: string, content: string }>, options?: object) => AsyncGenerator<string, void, void>} chatStream
  * @property {() => Promise<import('../../../types/llm.js').LlmHealthStatus>} checkHealth
  */

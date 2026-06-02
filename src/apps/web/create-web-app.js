@@ -39,9 +39,14 @@ export function createWebApp(deps) {
 
   /** @type {Map<string, import('./web-routes.js').WebRouteHandler>} */
   const routes = new Map();
+  /** @type {Map<string, (req: http.IncomingMessage, res: http.ServerResponse, body: any) => Promise<void>>} */
+  const streamRoutes = new Map();
   const registry = {
     register: (method, path, handler) => {
       routes.set(routeKey(method, path), handler);
+    },
+    registerStream: (method, path, handler) => {
+      streamRoutes.set(routeKey(method, path), handler);
     },
   };
 
@@ -84,7 +89,39 @@ export function createWebApp(deps) {
    * @param {URL} url
    */
   async function handleApiRequest(req, res, url) {
-    const handler = routes.get(routeKey(req.method ?? 'GET', url.pathname));
+    const method = req.method ?? 'GET';
+    const path = url.pathname;
+    const key = routeKey(method, path);
+    const accept = String(req.headers?.accept ?? '');
+    const wantsStream = accept.includes('text/event-stream');
+    const streamHandler = streamRoutes.get(key);
+
+    if (wantsStream && streamHandler) {
+      let body;
+      try {
+        body = await readJsonBody(req);
+      } catch (error) {
+        sendJson(res, 400, { error: 'Invalid JSON body', detail: error?.message });
+        return;
+      }
+      try {
+        await streamHandler(req, res, body);
+      } catch (error) {
+        // El handler stream es responsable de emitir el evento de error; este
+        // catch sólo cubre el caso en que algo explote ANTES de escribir
+        // cabeceras. Tras enviar headers no se puede cambiar el status.
+        if (!res.headersSent) {
+          logger.error({ err: error?.message, path }, 'Stream handler threw before headers sent');
+          sendJson(res, 500, { error: 'Internal server error' });
+        } else {
+          logger.warn({ err: error?.message, path }, 'Stream handler threw after headers sent');
+          try { res.end(); } catch { /* ignore */ }
+        }
+      }
+      return;
+    }
+
+    const handler = routes.get(key);
     if (!handler) {
       sendJson(res, 404, { error: 'Not found' });
       return;
