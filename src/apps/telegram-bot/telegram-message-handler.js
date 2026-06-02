@@ -53,7 +53,7 @@ const INBOX_CATEGORY_EMOJI = {
   revisar: '🤔',
 };
 
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, youtubeService, mediaTranscriber, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, gmailLabels, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, youtubeService, mediaTranscriber, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -523,6 +523,25 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     }
   });
 
+  router.register('/etiqueta', async (message) => {
+    const chatId = message.chat.id;
+    if (!gmailLabels) {
+      await bot.sendMessage(chatId, 'Gmail no configurado. Hay que ejecutar `luis google login` y configurar los paths.');
+      return;
+    }
+    const args = extractArgs(message.text ?? '').trim();
+    const indicator = await createThinkingIndicator(bot, chatId, { text: '🏷️ Gestionando etiquetas…', logger });
+    try {
+      const reply = await runGmailLabelCommand(args, gmailLabels);
+      await indicator.finish(reply, { parse_mode: 'HTML', disable_web_page_preview: true });
+    } catch (error) {
+      logger.warn({ chatId, err: error.message }, '/etiqueta failed');
+      await indicator.finish(`❌ No pude gestionar las etiquetas: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+    }
+  });
+  router.registerAlias('/label', '/etiqueta');
+  router.registerAlias('/labels', '/etiqueta');
+
   router.register('/agenda', async (message) => {
     const chatId = message.chat.id;
     if (!calendarClient) {
@@ -932,6 +951,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '/ha &lt;texto&gt; — pedir algo a Home Assistant',
       '/anuncia &lt;destino&gt; &lt;texto&gt; — anuncio en Alexa (o sin destino para elegir)',
       '/correo [hoy|de &lt;persona&gt;] — correos no leídos de hoy o de un remitente',
+      '/etiqueta — sin args lista tus etiquetas; <code>/etiqueta &lt;query&gt; | &lt;label&gt;</code> aplica una etiqueta a los mensajes que matchean',
       '/agenda [hoy|mañana|semana|próximo] — eventos del calendario',
       '/drive [buscar &lt;texto&gt;] — listar raíz o buscar en Drive (solo lectura)',
       '/guarda &lt;url&gt; — capturar URL al inbox (también auto-detectado si el mensaje empieza por http(s)://)',
@@ -1168,6 +1188,59 @@ function formatEmailReply(result) {
     return `${i + 1}. <b>${subject}</b>\n   <i>${from}</i>${snippet ? `\n   ${snippet}` : ''}`;
   });
   return `${heading}\n\n${lines.join('\n\n')}`;
+}
+
+/**
+ * Routes the argument string of `/etiqueta` to the right action on the labels client.
+ *
+ *   ""                          → list current labels
+ *   "list" / "listar"            → list current labels
+ *   "<query> | <labelName>"     → apply labelName to all messages matching <query>
+ *
+ * @param {string} args
+ * @param {import('../../modules/email/gmail-labels.js').GmailLabelsClient} client
+ * @returns {Promise<string>}
+ */
+async function runGmailLabelCommand(args, client) {
+  const trimmed = args.trim();
+  if (!trimmed || /^(?:list|listar|labels|etiquetas?)$/i.test(trimmed)) {
+    const labels = await client.listLabels();
+    const userLabels = labels.filter((l) => l.type !== 'system');
+    if (userLabels.length === 0) {
+      return '🏷️ No tienes etiquetas personalizadas todavía.\n\nUsa <code>/etiqueta &lt;query&gt; | &lt;nombre&gt;</code> para crear una.';
+    }
+    const lines = userLabels
+      .sort((a, b) => a.name.localeCompare(b.name, 'es'))
+      .map((l) => `• ${escapeHtml(l.name)}`);
+    return `🏷️ <b>Tus etiquetas (${userLabels.length}):</b>\n\n${lines.join('\n')}`;
+  }
+
+  const sep = trimmed.indexOf('|');
+  if (sep === -1) {
+    return (
+      'Uso:\n' +
+      '  <code>/etiqueta</code> — lista tus etiquetas\n' +
+      '  <code>/etiqueta &lt;query Gmail&gt; | &lt;nombre&gt;</code> — etiqueta los correos que matcheen\n\n' +
+      'Ejemplo: <code>/etiqueta from:udemy | Estudio</code>'
+    );
+  }
+
+  const query = trimmed.slice(0, sep).trim();
+  const labelName = trimmed.slice(sep + 1).trim();
+  if (!query || !labelName) {
+    return '❌ Faltan datos. Formato: <code>/etiqueta &lt;query&gt; | &lt;nombre&gt;</code>';
+  }
+
+  const result = await client.applyToQuery({ query, labelName });
+  const createdHint = result.created ? ' (etiqueta creada)' : '';
+  if (result.matched === 0) {
+    return `📭 No encuentro correos que matcheen <code>${escapeHtml(query)}</code>.${createdHint}`;
+  }
+  const errPart = result.errors > 0 ? ` · ${result.errors} con error` : '';
+  return (
+    `🏷️ Etiqueta <b>${escapeHtml(result.labelName)}</b> aplicada a ` +
+    `<b>${result.labeled}/${result.matched}</b> correo${result.matched === 1 ? '' : 's'}${errPart}.${createdHint}`
+  );
 }
 
 /**

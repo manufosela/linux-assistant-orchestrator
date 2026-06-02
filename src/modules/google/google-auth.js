@@ -4,6 +4,12 @@ import { google } from 'googleapis';
 
 const SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
+  // gmail.modify: permite gestionar labels en mensajes (LUI-TSK-0030). El scope
+  // técnicamente incluye trash/untrash, pero el módulo gmail-labels.js NUNCA
+  // expone esos métodos — sólo listLabels / createLabel / addLabels /
+  // removeLabels. Para borrar definitivamente haría falta gmail.modify Y un
+  // método delete del API, que tampoco existe en el cliente.
+  'https://www.googleapis.com/auth/gmail.modify',
   'https://www.googleapis.com/auth/calendar.readonly',
   'https://www.googleapis.com/auth/drive.readonly',
   // drive.file: app puede crear/leer/modificar/borrar SOLO los ficheros que

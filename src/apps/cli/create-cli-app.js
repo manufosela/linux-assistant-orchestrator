@@ -84,7 +84,7 @@ export function createCliApp(deps) {
  * }} deps
  */
 function registerCommands(deps) {
-  const { router, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, googleAuth, clusterStatus, gmailClient, calendarClient, driveClient, youtubeService, mediaTranscriber, logger, remoteCodeTasksEnabled } = deps;
+  const { router, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, googleAuth, clusterStatus, gmailClient, gmailLabels, calendarClient, driveClient, youtubeService, mediaTranscriber, logger, remoteCodeTasksEnabled } = deps;
 
   router.register('status', async ({ renderer }) => {
     const status = statusService.getStatus();
@@ -184,6 +184,60 @@ function registerCommands(deps) {
       return { exitCode: 1 };
     }
   }, { description: 'Lista correos de un remitente concreto (luis mail from "banco")' });
+
+  router.register('mail labels', async ({ renderer }) => {
+    if (!gmailLabels) {
+      renderer.error('Gmail no configurado. Ejecuta `luis google login` primero.');
+      return { exitCode: 1 };
+    }
+    try {
+      const labels = await gmailLabels.listLabels();
+      const userLabels = labels.filter((l) => l.type !== 'system');
+      if (userLabels.length === 0) {
+        renderer.print('No tienes etiquetas personalizadas.');
+        return { exitCode: 0 };
+      }
+      userLabels
+        .sort((a, b) => a.name.localeCompare(b.name, 'es'))
+        .forEach((l) => renderer.print(`- ${l.name}`));
+      return { exitCode: 0 };
+    } catch (error) {
+      logger.warn({ err: error?.message }, 'CLI mail labels failed');
+      renderer.error(`Mail labels: ${error?.message ?? 'error desconocido'}`);
+      return { exitCode: 1 };
+    }
+  }, { description: 'Lista tus etiquetas de Gmail' });
+
+  router.register('mail label', async ({ args, flags, renderer }) => {
+    const joined = args.join(' ').trim();
+    const sep = joined.indexOf('|');
+    if (sep === -1) {
+      renderer.error('Uso: luis mail label "<query Gmail>" | "<nombre etiqueta>"');
+      renderer.info('Ejemplo: luis mail label "from:udemy" | Estudio');
+      return { exitCode: 1 };
+    }
+    const query = joined.slice(0, sep).trim().replace(/^["']|["']$/g, '');
+    const labelName = joined.slice(sep + 1).trim().replace(/^["']|["']$/g, '');
+    if (!query || !labelName) {
+      renderer.error('Faltan datos. Formato: luis mail label "<query>" | "<nombre>"');
+      return { exitCode: 1 };
+    }
+    if (!gmailLabels) {
+      renderer.error('Gmail no configurado. Ejecuta `luis google login` primero.');
+      return { exitCode: 1 };
+    }
+    try {
+      const maxResults = Number(flags.max ?? flags.limit ?? 25) || 25;
+      const result = await gmailLabels.applyToQuery({ query, labelName, maxResults });
+      if (result.created) renderer.info(`Etiqueta "${result.labelName}" creada.`);
+      renderer.print(`Etiquetados ${result.labeled}/${result.matched} correos${result.errors > 0 ? ` (${result.errors} con error)` : ''}.`);
+      return { exitCode: 0 };
+    } catch (error) {
+      logger.warn({ err: error?.message }, 'CLI mail label failed');
+      renderer.error(`Mail label: ${error?.message ?? 'error desconocido'}`);
+      return { exitCode: 1 };
+    }
+  }, { description: 'Aplica una etiqueta a todos los correos que matcheen una query Gmail' });
 
   router.register('calendar today', async ({ renderer }) => {
     return runCalendar('today', renderer);
