@@ -53,7 +53,7 @@ const INBOX_CATEGORY_EMOJI = {
   revisar: '🤔',
 };
 
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, gmailLabels, gmailDigest, gmailDigestConfig, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, youtubeService, mediaTranscriber, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, gmailLabels, gmailDigest, gmailDigestConfig, digestConfigStore, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, youtubeService, mediaTranscriber, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -520,6 +520,22 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     } catch (error) {
       logger.warn({ chatId, err: error.message }, '/correo failed');
       await indicator.finish(`❌ No pude consultar el correo: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+    }
+  });
+
+  router.register('/digest-config', async (message) => {
+    const chatId = message.chat.id;
+    if (!digestConfigStore) {
+      await bot.sendMessage(chatId, 'Config-store del digest no disponible.');
+      return;
+    }
+    const args = extractArgs(message.text ?? '').trim();
+    try {
+      const reply = await runDigestConfigCommand(args, digestConfigStore);
+      await bot.sendMessage(chatId, reply, { parse_mode: 'HTML' });
+    } catch (error) {
+      logger.warn({ chatId, err: error.message }, '/digest-config failed');
+      await bot.sendMessage(chatId, `❌ ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
     }
   });
 
@@ -1013,6 +1029,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '/correo [hoy|de &lt;persona&gt;] — correos no leídos de hoy o de un remitente',
       '/etiqueta — sin args lista tus etiquetas; <code>/etiqueta &lt;query&gt; | &lt;label&gt;</code> aplica una etiqueta a los mensajes que matchean',
       '/digest [query] — lista los no-leídos del filtro (rápido). Añade <code>resumir</code> para que la IA los resuma: <code>/digest resumir from:github</code>',
+      '/digest-config — gestiona las etiquetas que recibes a diario. <code>/digest-config lista add Trabajo</code> · <code>/digest-config resumen del Estudio</code>',
       '/agenda [hoy|mañana|semana|próximo] — eventos del calendario',
       '/drive [buscar &lt;texto&gt;] — listar raíz o buscar en Drive (solo lectura)',
       '/guarda &lt;url&gt; — capturar URL al inbox (también auto-detectado si el mensaje empieza por http(s)://)',
@@ -1249,6 +1266,86 @@ function formatEmailReply(result) {
     return `${i + 1}. <b>${subject}</b>\n   <i>${from}</i>${snippet ? `\n   ${snippet}` : ''}`;
   });
   return `${heading}\n\n${lines.join('\n\n')}`;
+}
+
+/**
+ * /digest-config <command>:
+ *   ""                              → muestra estado
+ *   "lista"|"resumen"               → muestra solo ese canal
+ *   "lista add|del <label>"         → modifica canal LISTA
+ *   "resumen add|del <label>"       → modifica canal RESUMEN
+ *   "lista|resumen clear"           → vacía el canal
+ *
+ * @param {string} args
+ * @param {import('../../modules/email/digest-config-store.js').DigestConfigStore} store
+ * @returns {Promise<string>}
+ */
+async function runDigestConfigCommand(args, store) {
+  const trimmed = args.trim();
+  if (!trimmed) {
+    return formatDigestConfig(await store.get());
+  }
+  const parts = trimmed.split(/\s+/);
+  const channelWord = parts[0].toLowerCase();
+  const channel = channelWord === 'lista' || channelWord === 'list'
+    ? 'list'
+    : channelWord === 'resumen' || channelWord === 'summary'
+      ? 'summary'
+      : null;
+  if (!channel) {
+    return (
+      '❌ Usa <code>lista</code> o <code>resumen</code> como primer argumento.\n\n' +
+      'Ejemplos:\n' +
+      '<code>/digest-config</code> — ver estado\n' +
+      '<code>/digest-config lista add Trabajo</code>\n' +
+      '<code>/digest-config resumen del Estudio</code>\n' +
+      '<code>/digest-config lista clear</code>'
+    );
+  }
+  const action = (parts[1] ?? '').toLowerCase();
+  const labelArg = parts.slice(2).join(' ').trim();
+
+  if (!action) {
+    const cfg = await store.get();
+    return formatDigestChannel(channel, channel === 'list' ? cfg.listLabels : cfg.summaryLabels);
+  }
+
+  if (action === 'add') {
+    const { changed, config } = await store.addLabel(channel, labelArg);
+    const prefix = changed ? '✅ Añadido.' : 'ℹ️ Ya estaba.';
+    return `${prefix}\n\n${formatDigestConfig(config)}`;
+  }
+  if (action === 'del' || action === 'rm' || action === 'remove') {
+    const { changed, config } = await store.removeLabel(channel, labelArg);
+    const prefix = changed ? '✅ Quitado.' : 'ℹ️ No estaba.';
+    return `${prefix}\n\n${formatDigestConfig(config)}`;
+  }
+  if (action === 'clear') {
+    const { changed, config } = await store.clear(channel);
+    const prefix = changed ? '✅ Canal vaciado.' : 'ℹ️ Ya estaba vacío.';
+    return `${prefix}\n\n${formatDigestConfig(config)}`;
+  }
+  return `❌ Acción desconocida: <code>${escapeHtml(action)}</code>. Usa <code>add</code>, <code>del</code> o <code>clear</code>.`;
+}
+
+function formatDigestConfig(config) {
+  return [
+    '🗂️ <b>Config del digest diario:</b>',
+    '',
+    formatDigestChannel('list', config.listLabels),
+    '',
+    formatDigestChannel('summary', config.summaryLabels),
+  ].join('\n');
+}
+
+function formatDigestChannel(channel, labels) {
+  const heading = channel === 'list'
+    ? '📋 <b>LISTA</b> (recibes el listado de no-leídos):'
+    : '📚 <b>RESUMEN</b> (recibes índice de resúmenes IA):';
+  const body = labels.length === 0
+    ? '<i>(sin etiquetas)</i>'
+    : labels.map((l) => `• ${escapeHtml(l)}`).join('\n');
+  return `${heading}\n${body}`;
 }
 
 /**

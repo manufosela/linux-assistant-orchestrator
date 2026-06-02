@@ -35,6 +35,7 @@ import { createGoogleAuth } from './modules/google/google-auth.js';
 import { createGmailClient } from './modules/email/gmail-client.js';
 import { createGmailLabels } from './modules/email/gmail-labels.js';
 import { createGmailDigest, scheduleDaily as scheduleDailyGmailDigest } from './modules/email/gmail-digest.js';
+import { createDigestConfigStore } from './modules/email/digest-config-store.js';
 import { createGoogleCalendarClient } from './modules/calendar/google-calendar-client.js';
 import { createGoogleDriveClient } from './modules/drive/google-drive-client.js';
 import { createWhisperClient } from './modules/whisper/whisper-client.js';
@@ -296,6 +297,18 @@ async function main() {
   // by the LLM-backed router, and dispatched to the matching action
   // (note → notes/, descartar → marked discarded, foto/doc/voz → pending
   // downstream cards).
+  // Digest config store (LUI-TSK-0063): persistencia de qué etiquetas se
+  // envían a diario en modo LISTA vs RESUMEN. Anula los defaults de .env
+  // si el fichero existe.
+  const digestConfigStore = createDigestConfigStore({
+    statePath: `${config.gmailDigest.cachePath}/state.json`,
+    defaults: {
+      listLabels: config.gmailDigest.listLabels,
+      summaryLabels: config.gmailDigest.summaryLabels,
+    },
+    logger,
+  });
+
   const inboxStore = createInboxStore({ inboxPath: config.inbox.path, logger });
   const inboxRouter = createInboxRouter({
     llmService,
@@ -369,6 +382,7 @@ async function main() {
       gmailLabels,
       gmailDigest,
       gmailDigestConfig: config.gmailDigest,
+      digestConfigStore,
       calendarClient,
       driveClient,
       inboxStore,

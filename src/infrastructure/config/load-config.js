@@ -198,6 +198,13 @@ export function loadConfig(envPath = '.env') {
       maxResults: Number(process.env.GMAIL_DIGEST_MAX ?? 20),
       // Si true, tras enviar el digest marca los correos como leídos.
       markAsRead: process.env.GMAIL_DIGEST_MARK_READ !== 'false',
+      // LUI-TSK-0063: dos canales independientes por etiqueta. La config
+      // del store en disco anula estos defaults si existe.
+      listLabels: parseCsvList(process.env.GMAIL_DIGEST_LIST_LABELS),
+      summaryLabels: parseCsvList(process.env.GMAIL_DIGEST_SUMMARY_LABELS),
+      // Directorio donde el digest persiste su estado: config, last-run
+      // por etiqueta, y resúmenes pre-generados. /data en el container.
+      cachePath: process.env.GMAIL_DIGEST_CACHE_PATH ?? '/data/digest-cache',
     },
 
     planningGame: {
