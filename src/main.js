@@ -36,6 +36,8 @@ import { createGmailClient } from './modules/email/gmail-client.js';
 import { createGmailLabels } from './modules/email/gmail-labels.js';
 import { createGmailDigest, scheduleDaily as scheduleDailyGmailDigest } from './modules/email/gmail-digest.js';
 import { createDigestConfigStore } from './modules/email/digest-config-store.js';
+import { createDigestLastRunStore } from './modules/email/digest-last-run-store.js';
+import { createDigestRunner } from './modules/email/digest-runner.js';
 import { createGoogleCalendarClient } from './modules/calendar/google-calendar-client.js';
 import { createGoogleDriveClient } from './modules/drive/google-drive-client.js';
 import { createWhisperClient } from './modules/whisper/whisper-client.js';
@@ -309,6 +311,21 @@ async function main() {
     logger,
   });
 
+  // LUI-TSK-0064: last-run por etiqueta (qué ids enviamos ayer, para
+  // marcarlos como leídos hoy) + runner que orquesta el cron por etiqueta.
+  const digestLastRunStore = createDigestLastRunStore({
+    dir: `${config.gmailDigest.cachePath}/last-run`,
+    logger,
+  });
+  const digestRunner = gmailDigest && gmailLabels
+    ? createDigestRunner({
+        gmailDigest,
+        gmailLabels,
+        lastRunStore: digestLastRunStore,
+        logger,
+      })
+    : null;
+
   const inboxStore = createInboxStore({ inboxPath: config.inbox.path, logger });
   const inboxRouter = createInboxRouter({
     llmService,
@@ -433,8 +450,15 @@ async function main() {
     logger.info('Cluster watcher disabled (set CLUSTER_ENABLED=true to enable)');
   }
 
-  // Gmail digest diario (LUI-TSK-0031). Off por defecto: requiere
-  // gmailDigest configurado, notificación habilitada y GMAIL_DIGEST_ENABLED=true.
+  // Gmail digest diario (LUI-TSK-0031 / LUI-TSK-0064). Off por defecto:
+  // requiere gmailDigest, notificación y GMAIL_DIGEST_ENABLED=true.
+  //
+  // Modo nuevo (preferido): si en el digestConfigStore hay listLabels y/o
+  // summaryLabels, el runner procesa cada etiqueta como canal LISTA y/o
+  // canal RESUMEN (este último implementado en LUI-TSK-0065).
+  //
+  // Modo legacy: si NO hay etiquetas configuradas, cae al dispatch único
+  // con GMAIL_DIGEST_QUERY (comportamiento previo).
   if (config.gmailDigest.enabled && gmailDigest && telegramNotificationChannel) {
     scheduleDailyGmailDigest({
       scheduler,
@@ -443,12 +467,34 @@ async function main() {
       logger,
       run: async () => {
         try {
-          await gmailDigest.dispatch({
-            query: config.gmailDigest.query,
-            maxResults: config.gmailDigest.maxResults,
-            markAsRead: config.gmailDigest.markAsRead,
-            notify: (text) => notificationService.sendNotification({ text, level: 'info' }),
-          });
+          const cfg = await digestConfigStore.get();
+          const hasListLabels = cfg.listLabels.length > 0;
+          const hasSummaryLabels = cfg.summaryLabels.length > 0;
+
+          if (digestRunner && hasListLabels) {
+            await digestRunner.runListChannel({
+              listLabels: cfg.listLabels,
+              maxResults: config.gmailDigest.maxResults,
+              notify: (text) => notificationService.sendNotification({ text, level: 'info' }),
+            });
+          }
+          if (hasSummaryLabels) {
+            // LUI-TSK-0065 (próxima fase). Por ahora avisamos.
+            logger.info(
+              { count: cfg.summaryLabels.length },
+              'Gmail digest: SUMMARY channel configurado pero no implementado todavía (LUI-TSK-0065)',
+            );
+          }
+
+          // Fallback legacy si no hay etiquetas configuradas.
+          if (!hasListLabels && !hasSummaryLabels) {
+            await gmailDigest.dispatch({
+              query: config.gmailDigest.query,
+              maxResults: config.gmailDigest.maxResults,
+              markAsRead: config.gmailDigest.markAsRead,
+              notify: (text) => notificationService.sendNotification({ text, level: 'info' }),
+            });
+          }
         } catch (error) {
           logger.warn({ err: error?.message }, 'Gmail digest scheduled run failed');
         }
@@ -458,7 +504,6 @@ async function main() {
       {
         hour: config.gmailDigest.hour,
         minute: config.gmailDigest.minute,
-        query: config.gmailDigest.query,
       },
       'Gmail digest scheduled',
     );
