@@ -98,31 +98,49 @@ describe('createDownloadClassifier — fallback al LLM', () => {
     assert.equal(r.category, 'SERIES');
   });
 
-  it('LLM devuelve categoría inválida → fuerza OTHER con confidence 0', async () => {
+  it('LLM devuelve categoría inválida + heurística OTHER → OTHER final', async () => {
     const llm = fakeLlm('{"category":"VIDEOS","confidence":0.8,"rationale":"x"}');
     const c = createDownloadClassifier({ llmService: llm });
-    const r = await c.classify({ filename: 'algo.mkv' });
+    // pdf pequeño tiene heurística OTHER, así que no hay fallback útil
+    const r = await c.classify({ filename: 'doc.pdf', sizeBytes: 100_000 });
     assert.equal(r.category, 'OTHER');
-    assert.equal(r.confidence, 0);
   });
 
-  it('LLM devuelve texto NO json → fuerza OTHER', async () => {
+  it('LLM devuelve texto NO json + heurística OTHER → OTHER final', async () => {
     const llm = fakeLlm('No estoy seguro, podría ser cualquier cosa.');
     const c = createDownloadClassifier({ llmService: llm });
-    const r = await c.classify({ filename: 'algo.mkv' });
+    const r = await c.classify({ filename: 'doc.pdf', sizeBytes: 100_000 });
     assert.equal(r.category, 'OTHER');
-    assert.equal(r.confidence, 0);
   });
 
-  it('LLM lanza error → devuelve OTHER con confidence 0 (no aborta)', async () => {
+  it('LLM categoría inválida + heurística tenía pista → usamos la heurística', async () => {
+    const llm = fakeLlm('{"category":"VIDEOS","confidence":0.8,"rationale":"x"}');
+    const c = createDownloadClassifier({ llmService: llm });
+    const r = await c.classify({ filename: 'pelicula.mkv' });
+    assert.equal(r.category, 'PELICULAS');
+    assert.equal(r.source, 'heuristic-fallback');
+  });
+
+  it('LLM lanza error y heurística no era OTHER → fallback a heurística', async () => {
     const llm = {
       async generateText() { throw new Error('LLM caído'); },
     };
     const c = createDownloadClassifier({ llmService: llm });
+    // Un vídeo sin marca tiene heurística PELICULAS confidence 0.55
     const r = await c.classify({ filename: 'algo.mkv' });
+    assert.equal(r.category, 'PELICULAS');
+    assert.equal(r.source, 'heuristic-fallback');
+  });
+
+  it('LLM lanza error y heurística también es OTHER → devuelve OTHER', async () => {
+    const llm = {
+      async generateText() { throw new Error('LLM caído'); },
+    };
+    const c = createDownloadClassifier({ llmService: llm });
+    // PDF pequeño da heurística OTHER → no hay fallback útil
+    const r = await c.classify({ filename: 'doc.pdf', sizeBytes: 100_000 });
     assert.equal(r.category, 'OTHER');
-    assert.equal(r.confidence, 0);
-    assert.match(r.rationale, /LLM caído/);
+    assert.equal(r.source, 'llm');
   });
 
   it('clampea confidence fuera de rango [0,1]', async () => {

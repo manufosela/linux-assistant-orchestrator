@@ -49,6 +49,19 @@ export function createDownloadClassifier({ llmService, logger }) {
 
     // 2) Fallback al LLM para casos ambiguos.
     const llm = await llmClassify({ filename, ext, sizeBytes, durationSec, llmService, logger });
+
+    // 2b) Si el LLM falló (confidence 0, categoría OTHER) pero la heurística
+    // tenía al menos una pista (categoría != OTHER), preferimos la heurística:
+    // "algo es mejor que nada en local". El usuario revisa el log y mueve a
+    // mano si la heurística se equivocó.
+    if (llm.category === 'OTHER' && llm.confidence === 0 && heuristic.category !== 'OTHER') {
+      logger?.info(
+        { filename, ext, category: heuristic.category, source: 'heuristic-fallback' },
+        'download-classifier: LLM unavailable, falling back to heuristic',
+      );
+      return { ...heuristic, source: 'heuristic-fallback' };
+    }
+
     logger?.info(
       { filename, ext, category: llm.category, confidence: llm.confidence, source: 'llm' },
       'download-classifier: llm classification',
@@ -207,5 +220,5 @@ function clampNumber(value, min, max) {
 
 /**
  * @typedef {Object} DownloadClassifier
- * @property {(input: { filename: string, ext?: string, sizeBytes?: number, durationSec?: number }) => Promise<{ category: Category, confidence: number, rationale: string, source: 'heuristic'|'llm' }>} classify
+ * @property {(input: { filename: string, ext?: string, sizeBytes?: number, durationSec?: number }) => Promise<{ category: Category, confidence: number, rationale: string, source: 'heuristic'|'llm'|'heuristic-fallback' }>} classify
  */
