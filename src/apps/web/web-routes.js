@@ -35,7 +35,7 @@ const APT_HEALTH_DEDUP_TTL_MS = 24 * 60 * 60 * 1000;
  *   now?: () => number,
  * }} deps
  */
-export function registerWebRoutes({ registry, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, notificationService, prometheusClient, watchtowerWebhookToken, aptHealthWebhookToken, logger, now = Date.now }) {
+export function registerWebRoutes({ registry, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, notificationService, prometheusClient, downloadClassifier, watchtowerWebhookToken, aptHealthWebhookToken, logger, now = Date.now }) {
   registry.register('GET', '/api/status', async () => {
     const status = statusService.getStatus();
     return { status: 200, body: status };
@@ -150,6 +150,30 @@ export function registerWebRoutes({ registry, llmService, statusService, rulesRe
       const message = error?.message ?? 'LLM error';
       logger.warn({ err: message }, '/api/chat failed');
       return { status: 502, body: { error: 'LLM provider error', detail: message } };
+    }
+  });
+
+  // LUI-TSK-0066: clasificador de descargas para el script move-tg-to-nas.sh
+  // del portátil. Recibe metadata del fichero y devuelve la categoría.
+  registry.register('POST', '/api/classify-download', async (_req, body) => {
+    if (!downloadClassifier) {
+      return { status: 503, body: { error: 'Download classifier not configured' } };
+    }
+    const filename = typeof body?.filename === 'string' ? body.filename.trim() : '';
+    if (!filename) {
+      return { status: 400, body: { error: 'filename is required' } };
+    }
+    try {
+      const result = await downloadClassifier.classify({
+        filename,
+        ext: typeof body?.ext === 'string' ? body.ext : undefined,
+        sizeBytes: Number.isFinite(body?.sizeBytes) ? Number(body.sizeBytes) : undefined,
+        durationSec: Number.isFinite(body?.durationSec) ? Number(body.durationSec) : undefined,
+      });
+      return { status: 200, body: result };
+    } catch (error) {
+      logger.warn({ err: error?.message, filename }, '/api/classify-download failed');
+      return { status: 500, body: { error: error?.message ?? 'classifier error' } };
     }
   });
 
