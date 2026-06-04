@@ -10,6 +10,7 @@ import { createLlmService } from './modules/llm/llm-service.js';
 import { createDownloadRulesRepository } from './modules/downloads/download-rules-repository.js';
 import { createFileClassifier } from './modules/downloads/file-classifier.js';
 import { createLlmFileClassifier } from './modules/downloads/llm-file-classifier.js';
+import { createDownloadClassifier } from './modules/downloads/download-classifier.js';
 import { createFileMover } from './modules/downloads/file-mover.js';
 import { createDownloadWatcher } from './modules/downloads/download-watcher.js';
 import { createAssistantStatusService } from './modules/assistant/assistant-status-service.js';
@@ -91,6 +92,11 @@ async function main() {
   const llmFileClassifier = createLlmFileClassifier(llmService, rulesRepository, logger);
   const fileMover = createFileMover(logger);
   const downloadWatcher = createDownloadWatcher(config.downloads.watchPath, logger);
+
+  // LUI-TSK-0066: clasificador semántico de descargas (heurística + LLM)
+  // para el endpoint POST /api/classify-download que usa el script
+  // move-tg-to-nas.sh del portátil.
+  const downloadClassifier = createDownloadClassifier({ llmService, logger });
 
   // Wire download pipeline: new file → classify → move
   downloadWatcher.onNewFile(async (filePath) => {
@@ -537,6 +543,7 @@ async function main() {
         homeAssistant,
         notificationService,
         prometheusClient,
+        downloadClassifier,
         watchtowerWebhookToken: config.watchtower.webhookToken,
         aptHealthWebhookToken: config.aptHealth.webhookToken,
         logger,
