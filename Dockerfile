@@ -9,7 +9,9 @@ RUN pnpm install --frozen-lockfile --prod
 FROM node:22-alpine
 # yt-dlp + ffmpeg: required at runtime by src/modules/youtube to fetch subtitles
 # (fast path) or extract audio for local Whisper transcription (fallback).
-RUN apk add --no-cache tini yt-dlp ffmpeg
+# tzdata: para que la env TZ del contenedor (p.ej. Europe/Madrid) tenga efecto
+# y los crons del Gmail digest se disparen a la hora local declarada, no en UTC.
+RUN apk add --no-cache tini yt-dlp ffmpeg tzdata
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
