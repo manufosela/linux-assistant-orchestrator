@@ -458,6 +458,8 @@ async function main() {
       healthChecker: clusterHealthChecker,
       targets: clusterTargets,
       historyStore: clusterHistoryStore,
+      quietWindowStart: config.cluster.quietWindowStart,
+      quietWindowEnd: config.cluster.quietWindowEnd,
     });
     clusterWatcher.start();
   } else {

@@ -85,6 +85,13 @@ export function loadConfig(envPath = '.env') {
       n4Ip: process.env.CLUSTER_N4_IP ?? '',
       historyPath:
         process.env.CLUSTER_HISTORY_PATH ?? join(homedir(), '.config', 'luis', 'cluster-history.json'),
+      // LUI-TSK-0067: franja silenciosa diaria. Cualquier down que ocurra
+      // dentro de la franja se posterga: si el servicio sigue caído al
+      // salir de la franja, entonces se notifica. Si se recupera dentro de
+      // la franja, ni se notifica ni se logea como incidente al usuario.
+      // Formato HH:MM 24h. Vacío = comportamiento clásico (sin filtro).
+      quietWindowStart: process.env.CLUSTER_QUIET_START ?? '',
+      quietWindowEnd: process.env.CLUSTER_QUIET_END ?? '',
     },
 
     prometheus: {
