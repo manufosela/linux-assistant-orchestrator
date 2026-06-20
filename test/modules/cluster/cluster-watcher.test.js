@@ -67,7 +67,7 @@ describe('createClusterWatcher', () => {
       targets: [TARGET],
       historyStore: history,
       checkIntervalMs: 60_000,
-      retryDelayMs: 30_000,
+      retryDelayMs: 10,
     });
   });
 
@@ -78,41 +78,25 @@ describe('createClusterWatcher', () => {
     assert.equal(history.entries.length, 0);
   });
 
-  it('un fallo aislado no notifica hasta el reintento, y programa un único reintento', async () => {
-    checker.set(false);
-    await watcher.checkAll();
-    // Degradado: aún no se notifica, sólo se ha programado un reintento.
-    assert.equal(notifications.sent.length, 0);
-    assert.equal(scheduler.count, 1);
-
-    // Otro tick mientras está pending: no debe programar más reintentos ni notificar.
-    await watcher.checkAll();
-    assert.equal(notifications.sent.length, 0);
-    assert.equal(scheduler.count, 1);
-  });
-
   it('fallo transitorio (se recupera en el reintento) NO genera notificación', async () => {
     checker.set(false);
-    await watcher.checkAll();      // -> pending + retry programado
-    checker.set(true);            // se recupera antes del reintento
-    await scheduler.flush();       // retry: OK -> vuelve a up en silencio
+    // Cambiar a OK justo después del primer probe → el retry inline lo verá OK
+    setTimeout(() => checker.set(true), 5);
+    await watcher.checkAll();
 
     assert.equal(notifications.sent.length, 0);
     assert.equal(history.entries.length, 0);
   });
 
   it('notifica al caer Y al recuperarse, sin spam mientras sigue caído', async () => {
-    // Cae y sigue caído tras el reintento -> 1 notificación de caída.
+    // Cae y sigue caído tras el reintento inline -> 1 notificación de caída.
     checker.set(false);
     await watcher.checkAll();
-    await scheduler.flush();
 
     assert.equal(notifications.sent.length, 1);
     assert.equal(notifications.sent[0].level, 'warn');
-    assert.equal(
-      notifications.sent[0].text,
-      '⚠️ CLUSTER: Ollama en n3 no responde (192.168.1.12:11434)',
-    );
+    // Mensaje sin la dirección (formato nuevo agrupado por digest)
+    assert.match(notifications.sent[0].text, /Ollama en n3 no responde/);
     assert.equal(history.entries.length, 1);
     assert.equal(history.entries[0].type, 'down');
 
@@ -123,13 +107,13 @@ describe('createClusterWatcher', () => {
     assert.equal(notifications.sent.length, 1);
     assert.equal(history.entries.length, 1);
 
-    // Se recupera -> 1 notificación de recuperación.
+    // Se recupera -> 1 notificación de recuperación con duración.
     checker.set(true);
     await watcher.checkAll();
 
     assert.equal(notifications.sent.length, 2);
     assert.equal(notifications.sent[1].level, 'success');
-    assert.equal(notifications.sent[1].text, '✅ CLUSTER: Ollama en n3 recuperado');
+    assert.match(notifications.sent[1].text, /Ollama en n3 recuperado tras \d+/);
     assert.equal(history.entries.length, 2);
     assert.equal(history.entries[1].type, 'recovered');
 
@@ -145,7 +129,6 @@ describe('createClusterWatcher', () => {
 
     checker.set(false);
     await watcher.checkAll();
-    await scheduler.flush();
     status = watcher.getStatus();
     assert.equal(status[0].state, 'down');
     assert.equal(status[0].service, 'Ollama');

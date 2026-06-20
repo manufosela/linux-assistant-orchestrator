@@ -82,6 +82,7 @@ describe('createClusterWatcher con quiet hours', () => {
       notificationService: notifier.service,
       healthChecker: checker,
       targets,
+      retryDelayMs: 10,
       historyStore: { append: async () => {}, read: async () => [] },
       quietWindowStart: '23:00',
       quietWindowEnd: '08:00',
@@ -112,6 +113,7 @@ describe('createClusterWatcher con quiet hours', () => {
       notificationService: notifier.service,
       healthChecker: checker,
       targets,
+      retryDelayMs: 10,
       historyStore: { append: async () => {}, read: async () => [] },
       quietWindowStart: '23:00',
       quietWindowEnd: '08:00',
@@ -141,6 +143,7 @@ describe('createClusterWatcher con quiet hours', () => {
       notificationService: notifier.service,
       healthChecker: checker,
       targets,
+      retryDelayMs: 10,
       historyStore: { append: async () => {}, read: async () => [] },
       // sin quietWindow*
     });
@@ -159,6 +162,7 @@ describe('createClusterWatcher con quiet hours', () => {
       notificationService: notifier.service,
       healthChecker: checker,
       targets,
+      retryDelayMs: 10,
       historyStore: { append: async () => {}, read: async () => [] },
       quietWindowStart: 'no-valido',
       quietWindowEnd: '08:00',
