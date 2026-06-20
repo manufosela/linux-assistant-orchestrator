@@ -31,6 +31,7 @@ import { createClusterHealthChecker } from './modules/cluster/cluster-health-che
 import { createClusterHistoryStore } from './modules/cluster/cluster-history-store.js';
 import { createClusterStatusService } from './modules/cluster/cluster-status-service.js';
 import { createClusterWatcher } from './modules/cluster/cluster-watcher.js';
+import { createClusterStateStore } from './modules/cluster/cluster-state-store.js';
 import { createPrometheusClient } from './modules/prometheus/prometheus-client.js';
 import { createGoogleAuth } from './modules/google/google-auth.js';
 import { createGmailClient } from './modules/email/gmail-client.js';
@@ -451,6 +452,10 @@ async function main() {
   // Cluster watcher — monitors the 3 nodes and alerts on Telegram on failure/recovery.
   let clusterWatcher = null;
   if (config.cluster.enabled) {
+    const clusterStateStore = createClusterStateStore({
+      filePath: config.cluster.historyPath.replace(/history\.json$/, 'state.json'),
+      logger,
+    });
     clusterWatcher = createClusterWatcher({
       logger,
       scheduler,
@@ -458,6 +463,7 @@ async function main() {
       healthChecker: clusterHealthChecker,
       targets: clusterTargets,
       historyStore: clusterHistoryStore,
+      stateStore: clusterStateStore,
       quietWindowStart: config.cluster.quietWindowStart,
       quietWindowEnd: config.cluster.quietWindowEnd,
     });
