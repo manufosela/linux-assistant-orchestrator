@@ -282,6 +282,10 @@ export function loadConfig(envPath = '.env') {
       // y la vigilancia (exterior, nevera, dispositivos…). Vacío = ninguno.
       excludePattern: process.env.TEMP_EXCLUDE_PATTERN
         ?? 'exterior|outdoor|fuera|terraza|jard[ií]n|calle|balc[oó]n|nevera|frigo|congelador|fridge|freezer|cpu|bater|battery|coche',
+      // Sólo cuenta sensores con habitación (area) asignada: descarta duplicados
+      // y dispositivos sin área con valores basura (p.ej. 0.0). Pon
+      // TEMP_REQUIRE_AREA=false para incluir también los sensores sin área.
+      requireArea: process.env.TEMP_REQUIRE_AREA !== 'false',
       // Franja silenciosa nocturna (HH:MM). Default 23:00-08:00.
       quietWindowStart: process.env.TEMP_QUIET_START ?? '23:00',
       quietWindowEnd: process.env.TEMP_QUIET_END ?? '08:00',
@@ -345,6 +349,6 @@ function validateConfig(config) {
  * @property {{ enabled: boolean, host: string, port: number }} web
  * @property {{ search: { baseUrl: string, apiKey: string }, urlFetch: { allowPrivateNetworks: boolean, privateAllowlist: string[] } }} webTools
  * @property {{ baseUrl: string, token: string, language: string, agentId: string }} homeAssistant
- * @property {{ enabled: boolean, checkIntervalMs: number, summerMonths: number[], winterMonths: number[], summerMeanThreshold: number, summerRoomThreshold: number, winterMeanThreshold: number, winterRoomThreshold: number, reAlertMs: number, excludePattern: string, quietWindowStart: string, quietWindowEnd: string }} temperature
+ * @property {{ enabled: boolean, checkIntervalMs: number, summerMonths: number[], winterMonths: number[], summerMeanThreshold: number, summerRoomThreshold: number, winterMeanThreshold: number, winterRoomThreshold: number, reAlertMs: number, excludePattern: string, requireArea: boolean, quietWindowStart: string, quietWindowEnd: string }} temperature
  * @property {{ credentialsPath: string, tokensPath: string }} google
  */

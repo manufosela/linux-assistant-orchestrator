@@ -492,6 +492,7 @@ async function main() {
       winterRoomThreshold: config.temperature.winterRoomThreshold,
       reAlertMs: config.temperature.reAlertMs,
       excludePattern: config.temperature.excludePattern,
+      requireArea: config.temperature.requireArea,
       quietWindowStart: config.temperature.quietWindowStart,
       quietWindowEnd: config.temperature.quietWindowEnd,
     });

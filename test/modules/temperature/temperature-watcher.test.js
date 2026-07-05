@@ -195,6 +195,19 @@ describe('createTemperatureWatcher — robustez', () => {
     assert.equal(notifier.sent.length, 0);
   });
 
+  it('con requireArea (default) ignora sensores sin habitación (valor basura 0.0)', async () => {
+    const cache = buildFakeStateCache({ entities: [
+      temp('sensor.zigbee_raro', 0.0, ''), // sin área, 0.0 arrastraría la media
+      temp('sensor.cocina', 31.5, 'Cocina'),
+    ] });
+    const notifier = buildFakeNotifier();
+    const w = makeWatcher(cache, notifier);
+    await w.checkOnce();
+    assert.equal(notifier.sent.length, 1);
+    // La media es 31.5 (solo cocina), no 15.75 (si el 0.0 contara).
+    assert.match(notifier.sent[0].text, /Temperatura media: 31\.5º/);
+  });
+
   it('excluye sensores no interiores (exterior/nevera) por patrón', async () => {
     const cache = buildFakeStateCache({ entities: [
       temp('sensor.temp_exterior', 36, 'Exterior'),

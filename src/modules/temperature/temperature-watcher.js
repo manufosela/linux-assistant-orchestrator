@@ -55,6 +55,7 @@ export function createTemperatureWatcher({
   winterRoomThreshold = 20.1,
   reAlertMs = 3 * 60 * 60 * 1000,
   excludePattern = '',
+  requireArea = true,
   quietWindowStart = '',
   quietWindowEnd = '',
   nowFn = () => new Date(),
@@ -94,7 +95,14 @@ export function createTemperatureWatcher({
    */
   function readRooms() {
     const sensors = stateCache.findEntities({ deviceClass: 'temperature' });
-    const valid = sensors.filter((s) => isFiniteNumber(s.state) && !isExcluded(s, excludeRe));
+    const valid = sensors.filter((s) =>
+      isFiniteNumber(s.state)
+      && !isExcluded(s, excludeRe)
+      // Sólo sensores ubicados en una habitación: descarta duplicados y
+      // dispositivos sin área (que suelen dar valores basura tipo 0.0 y
+      // falsearían la media).
+      && (!requireArea || Boolean(s.area_name && s.area_name.trim())),
+    );
     if (valid.length === 0) return null;
 
     const allValues = valid.map((s) => Number(s.state));
