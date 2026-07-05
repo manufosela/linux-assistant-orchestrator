@@ -11,10 +11,19 @@ Es la **fase 1** del pipeline de descargas (lado portátil). La **fase 2** es
 
 ## Componentes
 
+Lado **portátil** (efímero):
+
 - **`move-tg-to-nas.sh`** — script principal. Clasifica por extensión y, para
-  vídeo, distingue PELICULAS / SERIES / ANIME por patrones del nombre.
+  vídeo, distingue PELICULAS / SERIES / ANIME por patrones del nombre. Al mover
+  algo, deja un report en `<NAS>/.move-reports/`.
 - **`move-tg-to-nas.service`** / **`move-tg-to-nas.timer`** — unidades systemd de
   usuario. El timer dispara el servicio a diario a las 03:00.
+
+Lado **servidorix** (siempre encendido):
+
+- **`notify-move-reports.sh`** — lee los reports del portátil en
+  `/media/raid5/.move-reports/` y es quien envía el aviso a Telegram vía el
+  webhook local de LUIS. Cada report se borra sólo si el POST tuvo éxito.
 
 ## Reglas de clasificación
 
@@ -39,35 +48,27 @@ tamaño distinto se sobreescribe (se asume que el local es el completo).
 
 ## Notificación
 
-Si se mueve al menos un fichero, se envía un resumen a Telegram vía el webhook
-watchtower de LUIS. Es **best-effort**: si LUIS está caído, falta el token o el
-`.env` no existe, el move **no falla** (sale 0 igualmente). Si no se mueve nada,
-no notifica.
+El aviso a Telegram lo emite **siempre servidorix**, nunca el portátil. Motivo: el
+portátil es efímero (puede estar apagado, suspendido o fuera de casa) y no debe
+llevar el token del webhook. El flujo es:
 
-La URL y el token son configurables por entorno, porque LUIS no siempre corre en
-`localhost`:
+1. El portátil, si movió ≥1 fichero, escribe el resumen ya formateado en
+   `<NAS>/.move-reports/move-tg-<host>-<timestamp>.txt`. Best-effort: si no puede
+   escribir, el move **no falla**. Si no movió nada, no deja report.
+2. `notify-move-reports.sh` en servidorix (cron cada ~5 min) recorre esos `.txt`,
+   hace el POST al webhook local de LUIS (`localhost:3030`) con el token de
+   `~/luis/.env`, y borra cada report sólo si el envío tuvo éxito (si LUIS está
+   caído, se reintenta a la siguiente pasada).
 
-| Variable | Por defecto | Uso |
-|----------|-------------|-----|
-| `WATCHTOWER_URL` | `http://localhost:3030/api/hooks/watchtower` | endpoint del webhook |
-| `WATCHTOWER_WEBHOOK_TOKEN` | — | token; si no, se lee del `.env` |
-| `WATCHTOWER_ENV_FILE` | `~/luis/.env` | `.env` de donde leer el token |
+Así el portátil no habla con LUIS ni maneja secretos, y ningún aviso se pierde
+aunque el portátil se apague justo después de mover.
 
-En el **host de LUIS** (servidorix) los valores por defecto ya funcionan. En el
-**portátil**, donde LUIS no corre en localhost, se configura vía la unidad
-systemd, que carga `~/.config/move-tg-to-nas.env` (no versionado, contiene el
-secreto):
-
-```ini
-# ~/.config/move-tg-to-nas.env  (chmod 600, NO se sube al repo)
-WATCHTOWER_URL=http://192.168.1.7:3030/api/hooks/watchtower
-WATCHTOWER_WEBHOOK_TOKEN=<token de servidorix:~/luis/.env>
-```
-
-El `move-tg-to-nas.service` lo carga con `EnvironmentFile=-%h/.config/move-tg-to-nas.env`
-(el `-` lo hace opcional).
+`notify-move-reports.sh` acepta overrides por entorno: `BASE_DIR` (raíz del NAS),
+`WATCHTOWER_URL`, `WATCHTOWER_WEBHOOK_TOKEN` y `WATCHTOWER_ENV_FILE`.
 
 ## Despliegue
+
+### Portátil
 
 El script canónico vive en este repo; la copia ejecutable está en
 `~/.local/bin/move-tg-to-nas.sh`. Para actualizar tras cambios:
@@ -77,6 +78,15 @@ cp scripts/host-setup/move-tg-to-nas/move-tg-to-nas.sh ~/.local/bin/move-tg-to-n
 cp scripts/host-setup/move-tg-to-nas/move-tg-to-nas.{service,timer} ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now move-tg-to-nas.timer
+```
+
+### Servidorix (relay de avisos)
+
+```bash
+scp scripts/host-setup/move-tg-to-nas/notify-move-reports.sh servidorix:/media/raid5/SRC/
+ssh servidorix 'chmod +x /media/raid5/SRC/notify-move-reports.sh'
+# Añadir al crontab de servidorix (una vez):
+#   */5 * * * * BASE_DIR=/media/raid5 /media/raid5/SRC/notify-move-reports.sh >/dev/null 2>&1
 ```
 
 Ejecutar una pasada manual:

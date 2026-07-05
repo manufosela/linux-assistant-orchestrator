@@ -24,13 +24,11 @@ LOG="$HOME/.local/state/move-tg-to-nas.log"
 SRC="$HOME/TelegramDownloadsLocal"
 NAS="$HOME/servidorix"
 
-# Notificación Telegram (webhook watchtower de LUIS). Configurable por entorno
-# para poder notificar desde equipos donde LUIS no corre en localhost: el
-# portátil apunta a servidorix (192.168.1.x:3030) vía WATCHTOWER_URL y recibe el
-# token por WATCHTOWER_WEBHOOK_TOKEN (systemd EnvironmentFile). Los valores por
-# defecto sirven en el propio host de LUIS. Ver README para la config del portátil.
-LUIS_URL="${WATCHTOWER_URL:-http://localhost:3030/api/hooks/watchtower}"
-ENV_FILE="${WATCHTOWER_ENV_FILE:-$HOME/luis/.env}"
+# Notificación: el portátil NO avisa por Telegram ni maneja tokens. Es efímero
+# (puede estar apagado/fuera de casa). Sólo deja un fichero de resumen en el NAS;
+# servidorix (siempre encendido) lo detecta y es quien envía el aviso a Telegram
+# vía LUIS. Ver notify-move-reports.sh (lado servidorix) y el README.
+REPORT_DIR="$NAS/.move-reports"
 
 mkdir -p "$(dirname "$LOG")"
 exec >>"$LOG" 2>&1
@@ -38,24 +36,16 @@ echo "=== $(date -Iseconds) ==="
 
 # Envía un mensaje a Telegram vía el webhook de LUIS. Best-effort: cualquier
 # fallo (token ausente, jq/curl no disponibles, LUIS caído) se ignora.
-notify_telegram() {
+# Deja el resumen en el NAS para que servidorix lo reenvíe a Telegram. Best-effort:
+# si el NAS no admite la escritura no se aborta el proceso (el move ya está hecho).
+write_report() {
     local msg="$1"
-    command -v curl >/dev/null 2>&1 || return 0
-    command -v jq   >/dev/null 2>&1 || return 0
-    # Token: del entorno (systemd EnvironmentFile) o del .env de LUIS si es
-    # legible. El grep sobre un fichero inexistente devolvería !=0 y, bajo
-    # `set -euo pipefail`, abortaría el proceso ya con todo movido; por eso se
-    # comprueba -f y se remata con `|| true`. La notificación es best-effort.
-    local token="${WATCHTOWER_WEBHOOK_TOKEN:-}"
-    if [[ -z "$token" && -f "$ENV_FILE" ]]; then
-        token=$(grep '^WATCHTOWER_WEBHOOK_TOKEN=' "$ENV_FILE" 2>/dev/null | sed 's/^WATCHTOWER_WEBHOOK_TOKEN=//') || true
-    fi
-    [[ -z "$token" ]] && return 0
-    local payload
-    payload=$(jq -n --arg m "$msg" '{message: $m}') || return 0
-    curl -fsS --max-time 10 -X POST "${LUIS_URL}?token=${token}" \
-        -H 'Content-Type: application/json' \
-        -d "$payload" >/dev/null 2>&1 || true
+    mkdir -p "$REPORT_DIR" 2>/dev/null || return 0
+    local ts host file
+    ts=$(date +%Y%m%d-%H%M%S)
+    host=$(hostname 2>/dev/null || echo host)
+    file="$REPORT_DIR/move-tg-${host}-${ts}.txt"
+    printf '%s\n' "$msg" >"$file" 2>/dev/null || true
     return 0
 }
 
@@ -251,7 +241,8 @@ done
 
 echo "Resultado: $moved movidos, $skipped saltados."
 
-# 5) Notificación Telegram (sólo si se movió algo).
+# 5) Report para servidorix (sólo si se movió algo). El aviso a Telegram lo
+#    emite servidorix al detectar este fichero; el portátil no notifica.
 if (( moved > 0 )); then
     detail=""
     for cat in PELICULAS SERIES ANIME LIBROS COMICS AUDIOLIBROS; do
@@ -268,5 +259,5 @@ if (( moved > 0 )); then
         esac
         detail+=$'\n'"${emoji} ${cat}: ${c}"
     done
-    notify_telegram "✅ move-tg-to-nas: ${moved} movidos, ${skipped} saltados${detail}"
+    write_report "✅ Descargas al NAS ($(hostname 2>/dev/null || echo portátil)): ${moved} movidos, ${skipped} saltados${detail}"
 fi
