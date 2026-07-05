@@ -243,21 +243,27 @@ echo "Resultado: $moved movidos, $skipped saltados."
 
 # 5) Report para servidorix (sólo si se movió algo). El aviso a Telegram lo
 #    emite servidorix al detectar este fichero; el portátil no notifica.
+#    El texto es EXACTAMENTE lo que llega al Telegram: claro, en español y
+#    descriptivo (norma del proyecto para todos los mensajes de Telegram).
 if (( moved > 0 )); then
     detail=""
     for cat in PELICULAS SERIES ANIME LIBROS COMICS AUDIOLIBROS; do
         c=${CAT[$cat]:-0}
         (( c == 0 )) && continue
         case "$cat" in
-            PELICULAS)   emoji="🎬" ;;
-            SERIES)      emoji="📺" ;;
-            ANIME)       emoji="🎌" ;;
-            LIBROS)      emoji="📚" ;;
-            COMICS)      emoji="📖" ;;
-            AUDIOLIBROS) emoji="🎧" ;;
-            *)           emoji="📁" ;;
+            PELICULAS)   label="🎬 Películas" ;;
+            SERIES)      label="📺 Series" ;;
+            ANIME)       label="🎌 Anime" ;;
+            LIBROS)      label="📚 Libros" ;;
+            COMICS)      label="📖 Cómics" ;;
+            AUDIOLIBROS) label="🎧 Audiolibros" ;;
+            *)           label="📁 ${cat}" ;;
         esac
-        detail+=$'\n'"${emoji} ${cat}: ${c}"
+        detail+=$'\n'"${label}: ${c}"
     done
-    write_report "✅ Descargas al NAS ($(hostname 2>/dev/null || echo portátil)): ${moved} movidos, ${skipped} saltados${detail}"
+    if (( moved == 1 )); then movidos_txt="1 archivo movido"; else movidos_txt="${moved} archivos movidos"; fi
+    saltados_txt=""
+    (( skipped > 0 )) && saltados_txt=" · ${skipped} sin clasificar (se quedan en el portátil)"
+    write_report "✅ Descargas de Telegram organizadas en el NAS
+📦 ${movidos_txt}${saltados_txt}${detail}"
 fi
