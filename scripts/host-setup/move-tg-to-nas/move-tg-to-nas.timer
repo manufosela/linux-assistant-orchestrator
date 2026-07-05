@@ -1,0 +1,11 @@
+[Unit]
+Description=Diario 03:00 - mueve descargas Telegram al NAS
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=5min
+Unit=move-tg-to-nas.service
+
+[Install]
+WantedBy=timers.target
