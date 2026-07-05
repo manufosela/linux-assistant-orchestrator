@@ -24,9 +24,13 @@ LOG="$HOME/.local/state/move-tg-to-nas.log"
 SRC="$HOME/TelegramDownloadsLocal"
 NAS="$HOME/servidorix"
 
-# Notificación Telegram (webhook watchtower de LUIS)
-LUIS_URL="http://localhost:3030/api/hooks/watchtower"
-ENV_FILE="$HOME/luis/.env"
+# Notificación Telegram (webhook watchtower de LUIS). Configurable por entorno
+# para poder notificar desde equipos donde LUIS no corre en localhost: el
+# portátil apunta a servidorix (192.168.1.x:3030) vía WATCHTOWER_URL y recibe el
+# token por WATCHTOWER_WEBHOOK_TOKEN (systemd EnvironmentFile). Los valores por
+# defecto sirven en el propio host de LUIS. Ver README para la config del portátil.
+LUIS_URL="${WATCHTOWER_URL:-http://localhost:3030/api/hooks/watchtower}"
+ENV_FILE="${WATCHTOWER_ENV_FILE:-$HOME/luis/.env}"
 
 mkdir -p "$(dirname "$LOG")"
 exec >>"$LOG" 2>&1
@@ -36,16 +40,23 @@ echo "=== $(date -Iseconds) ==="
 # fallo (token ausente, jq/curl no disponibles, LUIS caído) se ignora.
 notify_telegram() {
     local msg="$1"
-    local token
-    token=$(grep '^WATCHTOWER_WEBHOOK_TOKEN=' "$ENV_FILE" 2>/dev/null | sed 's/^WATCHTOWER_WEBHOOK_TOKEN=//')
-    [[ -z "$token" ]] && return 0
-    command -v jq >/dev/null 2>&1 || return 0
     command -v curl >/dev/null 2>&1 || return 0
+    command -v jq   >/dev/null 2>&1 || return 0
+    # Token: del entorno (systemd EnvironmentFile) o del .env de LUIS si es
+    # legible. El grep sobre un fichero inexistente devolvería !=0 y, bajo
+    # `set -euo pipefail`, abortaría el proceso ya con todo movido; por eso se
+    # comprueba -f y se remata con `|| true`. La notificación es best-effort.
+    local token="${WATCHTOWER_WEBHOOK_TOKEN:-}"
+    if [[ -z "$token" && -f "$ENV_FILE" ]]; then
+        token=$(grep '^WATCHTOWER_WEBHOOK_TOKEN=' "$ENV_FILE" 2>/dev/null | sed 's/^WATCHTOWER_WEBHOOK_TOKEN=//') || true
+    fi
+    [[ -z "$token" ]] && return 0
     local payload
-    payload=$(jq -n --arg m "$msg" '{message: $m}')
+    payload=$(jq -n --arg m "$msg" '{message: $m}') || return 0
     curl -fsS --max-time 10 -X POST "${LUIS_URL}?token=${token}" \
         -H 'Content-Type: application/json' \
         -d "$payload" >/dev/null 2>&1 || true
+    return 0
 }
 
 if ! ls "$NAS" >/dev/null 2>&1; then

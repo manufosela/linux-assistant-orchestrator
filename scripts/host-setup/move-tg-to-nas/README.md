@@ -40,9 +40,32 @@ tamaño distinto se sobreescribe (se asume que el local es el completo).
 ## Notificación
 
 Si se mueve al menos un fichero, se envía un resumen a Telegram vía el webhook
-watchtower de LUIS (`http://localhost:3030/api/hooks/watchtower`, token en
-`~/luis/.env` como `WATCHTOWER_WEBHOOK_TOKEN`). Es best-effort: si LUIS está
-caído o falta el token, el move no falla. Si no se mueve nada, no notifica.
+watchtower de LUIS. Es **best-effort**: si LUIS está caído, falta el token o el
+`.env` no existe, el move **no falla** (sale 0 igualmente). Si no se mueve nada,
+no notifica.
+
+La URL y el token son configurables por entorno, porque LUIS no siempre corre en
+`localhost`:
+
+| Variable | Por defecto | Uso |
+|----------|-------------|-----|
+| `WATCHTOWER_URL` | `http://localhost:3030/api/hooks/watchtower` | endpoint del webhook |
+| `WATCHTOWER_WEBHOOK_TOKEN` | — | token; si no, se lee del `.env` |
+| `WATCHTOWER_ENV_FILE` | `~/luis/.env` | `.env` de donde leer el token |
+
+En el **host de LUIS** (servidorix) los valores por defecto ya funcionan. En el
+**portátil**, donde LUIS no corre en localhost, se configura vía la unidad
+systemd, que carga `~/.config/move-tg-to-nas.env` (no versionado, contiene el
+secreto):
+
+```ini
+# ~/.config/move-tg-to-nas.env  (chmod 600, NO se sube al repo)
+WATCHTOWER_URL=http://192.168.1.7:3030/api/hooks/watchtower
+WATCHTOWER_WEBHOOK_TOKEN=<token de servidorix:~/luis/.env>
+```
+
+El `move-tg-to-nas.service` lo carga con `EnvironmentFile=-%h/.config/move-tg-to-nas.env`
+(el `-` lo hace opcional).
 
 ## Despliegue
 

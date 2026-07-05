@@ -4,4 +4,6 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+# Config opcional (URL + token del webhook LUIS). El '-' evita fallo si no existe.
+EnvironmentFile=-%h/.config/move-tg-to-nas.env
 ExecStart=%h/.local/bin/move-tg-to-nas.sh
