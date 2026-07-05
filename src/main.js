@@ -32,6 +32,7 @@ import { createClusterHistoryStore } from './modules/cluster/cluster-history-sto
 import { createClusterStatusService } from './modules/cluster/cluster-status-service.js';
 import { createClusterWatcher } from './modules/cluster/cluster-watcher.js';
 import { createClusterStateStore } from './modules/cluster/cluster-state-store.js';
+import { createTemperatureWatcher } from './modules/temperature/temperature-watcher.js';
 import { createPrometheusClient } from './modules/prometheus/prometheus-client.js';
 import { createGoogleAuth } from './modules/google/google-auth.js';
 import { createGmailClient } from './modules/email/gmail-client.js';
@@ -137,6 +138,7 @@ async function main() {
     { name: 'web', status: config.web.enabled ? 'enabled' : 'disabled', note: config.web.enabled ? `${config.web.host}:${config.web.port}` : undefined },
     { name: 'cluster', status: config.cluster.enabled ? 'enabled' : 'disabled' },
     { name: 'prometheus', status: config.prometheus.enabled ? 'enabled' : 'disabled' },
+    { name: 'temperature', status: config.temperature.enabled ? 'enabled' : 'disabled' },
   ];
 
   const statusService = createAssistantStatusService({
@@ -472,6 +474,35 @@ async function main() {
     logger.info('Cluster watcher disabled (set CLUSTER_ENABLED=true to enable)');
   }
 
+  // Temperature watcher (LUI-TSK-0071) — vigila la temperatura de Home Assistant
+  // y avisa por Telegram según temporada (verano: calor; invierno: frío).
+  let temperatureWatcher = null;
+  if (config.temperature.enabled && homeAssistantStateCache) {
+    temperatureWatcher = createTemperatureWatcher({
+      logger,
+      scheduler,
+      notificationService,
+      stateCache: homeAssistantStateCache,
+      checkIntervalMs: config.temperature.checkIntervalMs,
+      summerMonths: config.temperature.summerMonths,
+      winterMonths: config.temperature.winterMonths,
+      summerMeanThreshold: config.temperature.summerMeanThreshold,
+      summerRoomThreshold: config.temperature.summerRoomThreshold,
+      winterMeanThreshold: config.temperature.winterMeanThreshold,
+      winterRoomThreshold: config.temperature.winterRoomThreshold,
+      reAlertMs: config.temperature.reAlertMs,
+      excludePattern: config.temperature.excludePattern,
+      requireArea: config.temperature.requireArea,
+      quietWindowStart: config.temperature.quietWindowStart,
+      quietWindowEnd: config.temperature.quietWindowEnd,
+    });
+    temperatureWatcher.start();
+  } else if (config.temperature.enabled) {
+    logger.warn('Temperature watcher enabled but Home Assistant is not available — skipped');
+  } else {
+    logger.info('Temperature watcher disabled (set TEMP_WATCHER_ENABLED=true to enable)');
+  }
+
   // Gmail digest diario (LUI-TSK-0031 / LUI-TSK-0064). Off por defecto:
   // requiere gmailDigest, notificación y GMAIL_DIGEST_ENABLED=true.
   //
@@ -575,6 +606,7 @@ async function main() {
     logger.info({ signal }, 'Shutdown signal received');
     scheduler.stopAll();
     clusterWatcher?.stop();
+    temperatureWatcher?.stop();
     await downloadWatcher.stop();
     await telegramStop();
     await webStop();

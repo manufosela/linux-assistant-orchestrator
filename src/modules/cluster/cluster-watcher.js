@@ -364,7 +364,7 @@ export function createClusterWatcher({
  * @param {string} endRaw
  * @returns {{ startMin: number, endMin: number } | null}
  */
-function parseQuietWindow(startRaw, endRaw) {
+export function parseQuietWindow(startRaw, endRaw) {
   const start = parseHHMM(startRaw);
   const end = parseHHMM(endRaw);
   if (start === null || end === null) return null;
