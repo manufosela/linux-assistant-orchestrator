@@ -42,6 +42,19 @@ function parseCsvList(raw) {
 }
 
 /**
+ * Parses a comma-separated list of integers, falling back to `fallback` when
+ * empty, unset or fully invalid.
+ *
+ * @param {string | undefined} raw
+ * @param {number[]} fallback
+ * @returns {number[]}
+ */
+function parseCsvNumbers(raw, fallback) {
+  const list = parseCsvList(raw).map(Number).filter((n) => Number.isInteger(n));
+  return list.length > 0 ? list : fallback;
+}
+
+/**
  * Loads and validates all configuration from environment variables.
  * Must be called once at startup after dotenv is loaded.
  *
@@ -248,6 +261,31 @@ export function loadConfig(envPath = '.env') {
       language: process.env.HA_LANGUAGE ?? 'es',
       agentId: process.env.HA_AGENT_ID ?? '',
     },
+
+    temperature: {
+      // Watcher de temperatura vía Home Assistant (LUI-TSK-0071). Off por
+      // defecto; al habilitarlo requiere HA configurado (validado abajo).
+      enabled: process.env.TEMP_WATCHER_ENABLED === 'true',
+      checkIntervalMs: Number(process.env.TEMP_CHECK_INTERVAL_MS ?? 15 * 60 * 1000),
+      // Temporadas por número de mes (1-12).
+      summerMonths: parseCsvNumbers(process.env.TEMP_SUMMER_MONTHS, [5, 6, 7, 8, 9, 10]),
+      winterMonths: parseCsvNumbers(process.env.TEMP_WINTER_MONTHS, [11, 12, 1, 2, 3, 4]),
+      // Verano (calor): alerta si media de la casa ≥ mean o alguna habitación ≥ room.
+      summerMeanThreshold: Number(process.env.TEMP_SUMMER_MEAN_MAX ?? 30.0),
+      summerRoomThreshold: Number(process.env.TEMP_SUMMER_ROOM_MAX ?? 31.0),
+      // Invierno (frío): alerta si media ≤ mean o alguna habitación ≤ room.
+      winterMeanThreshold: Number(process.env.TEMP_WINTER_MEAN_MIN ?? 20.1),
+      winterRoomThreshold: Number(process.env.TEMP_WINTER_ROOM_MIN ?? 20.1),
+      // Re-aviso si la alerta persiste (ms). Default 3 h.
+      reAlertMs: Number(process.env.TEMP_REALERT_MS ?? 3 * 60 * 60 * 1000),
+      // Regex (case-insensitive) para excluir sensores no interiores de la media
+      // y la vigilancia (exterior, nevera, dispositivos…). Vacío = ninguno.
+      excludePattern: process.env.TEMP_EXCLUDE_PATTERN
+        ?? 'exterior|outdoor|fuera|terraza|jard[ií]n|calle|balc[oó]n|nevera|frigo|congelador|fridge|freezer|cpu|bater|battery|coche',
+      // Franja silenciosa nocturna (HH:MM). Default 23:00-08:00.
+      quietWindowStart: process.env.TEMP_QUIET_START ?? '23:00',
+      quietWindowEnd: process.env.TEMP_QUIET_END ?? '08:00',
+    },
   };
 
   validateConfig(config);
@@ -279,6 +317,13 @@ function validateConfig(config) {
         'Set it (e.g. http://192.168.1.7:9090) or set PROMETHEUS_ENABLED=false to disable it.',
     );
   }
+
+  if (config.temperature.enabled && (!config.homeAssistant.baseUrl || !config.homeAssistant.token)) {
+    throw new Error(
+      'Temperature watcher is enabled (TEMP_WATCHER_ENABLED=true) but Home Assistant is not configured. ' +
+        'Set HA_BASE_URL and HA_TOKEN, or set TEMP_WATCHER_ENABLED=false to disable it.',
+    );
+  }
 }
 
 /**
@@ -300,5 +345,6 @@ function validateConfig(config) {
  * @property {{ enabled: boolean, host: string, port: number }} web
  * @property {{ search: { baseUrl: string, apiKey: string }, urlFetch: { allowPrivateNetworks: boolean, privateAllowlist: string[] } }} webTools
  * @property {{ baseUrl: string, token: string, language: string, agentId: string }} homeAssistant
+ * @property {{ enabled: boolean, checkIntervalMs: number, summerMonths: number[], winterMonths: number[], summerMeanThreshold: number, summerRoomThreshold: number, winterMeanThreshold: number, winterRoomThreshold: number, reAlertMs: number, excludePattern: string, quietWindowStart: string, quietWindowEnd: string }} temperature
  * @property {{ credentialsPath: string, tokensPath: string }} google
  */
