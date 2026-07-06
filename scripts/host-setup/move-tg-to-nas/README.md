@@ -56,9 +56,11 @@ llevar el token del webhook. El flujo es:
    `<NAS>/.move-reports/move-tg-<host>-<timestamp>.txt`. Best-effort: si no puede
    escribir, el move **no falla**. Si no movió nada, no deja report.
 2. `notify-move-reports.sh` en servidorix (cron cada ~5 min) recorre esos `.txt`,
-   hace el POST al webhook local de LUIS (`localhost:3030`) con el token de
-   `~/luis/.env`, y borra cada report sólo si el envío tuvo éxito (si LUIS está
-   caído, se reintenta a la siguiente pasada).
+   hace el POST al webhook local de LUIS `POST /api/hooks/notify` (`localhost:3030`)
+   con el token de `~/luis/.env`, y borra cada report sólo si el envío tuvo éxito
+   (si LUIS está caído, se reintenta a la siguiente pasada). Se usa `/notify`
+   (reemite el texto tal cual) y NO `/watchtower`, que aplanaría el mensaje a la
+   primera línea y perdería el desglose por categoría.
 
 Así el portátil no habla con LUIS ni maneja secretos, y ningún aviso se pierde
 aunque el portátil se apague justo después de mover.
