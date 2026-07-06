@@ -304,6 +304,46 @@ export function registerWebRoutes({ registry, llmService, statusService, rulesRe
     }
   });
 
+  // POST /api/hooks/notify — webhook genérico: reemite `message` TAL CUAL a
+  // Telegram (multilínea, sin reformatear). Para avisos ya compuestos por
+  // scripts (p.ej. el resumen de move-tg-to-nas con su desglose por categoría).
+  // A diferencia de /watchtower, NO aplana el texto a la primera línea. Reutiliza
+  // el token de Watchtower (?token= o X-Webhook-Token). Opcional: `level`.
+  registry.register('POST', '/api/hooks/notify', async (req, body) => {
+    if (!watchtowerWebhookToken) {
+      return { status: 503, body: { error: 'notify webhook disabled (set WATCHTOWER_WEBHOOK_TOKEN)' } };
+    }
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const token = url.searchParams.get('token') ?? req.headers['x-webhook-token'];
+    if (token !== watchtowerWebhookToken) {
+      logger.warn('notify webhook rejected: bad or missing token');
+      return { status: 401, body: { error: 'unauthorized' } };
+    }
+    if (!notificationService) {
+      return { status: 503, body: { error: 'Notifications not configured' } };
+    }
+    const raw = typeof body === 'string'
+      ? body
+      : (body && typeof body === 'object' && typeof body.message === 'string' ? body.message : '');
+    const message = raw.trim();
+    if (!message) {
+      return { status: 400, body: { error: 'message required' } };
+    }
+    const allowedLevels = ['info', 'warn', 'error', 'success'];
+    const level = body && typeof body === 'object' && allowedLevels.includes(body.level) ? body.level : 'info';
+    // parse_mode HTML en el canal Telegram: escapamos < > & del texto plano.
+    const safe = message.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+    try {
+      await notificationService.sendNotification({ text: safe, level });
+      logger.info({ level }, 'notify webhook relayed');
+      return { status: 200, body: { ok: true } };
+    } catch (error) {
+      const detail = error?.message ?? 'notify webhook error';
+      logger.warn({ err: detail }, '/api/hooks/notify failed');
+      return { status: 502, body: { error: 'Relay failed', detail } };
+    }
+  });
+
   // POST /api/hooks/apt-health — endpoint para que cada host de la red avise
   // cuando unattended-upgrade falla, hay pendientes acumulados o reboot
   // pendiente. Auth por Bearer token (también acepta ?token= por compatibilidad
