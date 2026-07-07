@@ -21,13 +21,20 @@ el cluster watcher.
   `TEMP_REALERT_MS` mientras persista; aviso de normalización al volver al rango.
 - **Franja silenciosa**: dentro de la ventana nocturna detecta pero no avisa; al
   salir, si la alerta sigue, avisa.
+- **Temperatura exterior**: si `TEMP_OUTDOOR_ENTITY` apunta a un sensor con
+  lectura válida, se añade al aviso. Ese sensor se **excluye** del cómputo
+  interior (media y habitaciones), aunque tenga un área interior asignada. Si
+  está `unavailable`, se omite del mensaje (no se inventa).
+- **Humedad relativa media interior**: se añade a los avisos, calculada sobre los
+  sensores `device_class=humidity` con el mismo filtro (área + exclusiones).
 - Lecturas `unknown`/`unavailable` o HA caído → se descartan, nunca se inventan.
 
-Mensajes en español, formato:
+Se añade a los avisos de calor, frío y normalización. Mensajes en español:
 
 ```
 🌡️ Hace calor en casa
 Temperatura Cocina: 31.3º | Temperatura media: 29.7º
+🌡️ Exterior: 34.2º · 💧 Humedad media: 45%
 ```
 
 ## Variables de entorno
@@ -45,5 +52,6 @@ Temperatura Cocina: 31.3º | Temperatura media: 29.7º
 | `TEMP_REALERT_MS` | `10800000` (3 h) | Re-aviso mientras persista la alerta |
 | `TEMP_EXCLUDE_PATTERN` | `exterior\|nevera\|…` | Regex (i) de sensores a excluir de la media/vigilancia |
 | `TEMP_REQUIRE_AREA` | `true` | Solo cuenta sensores con habitación asignada (descarta ruido sin área) |
+| `TEMP_OUTDOOR_ENTITY` | (vacío) | entity_id del sensor de temperatura exterior; se añade al aviso y se excluye del interior |
 | `TEMP_QUIET_START` | `23:00` | Inicio de la franja silenciosa (HH:MM) |
 | `TEMP_QUIET_END` | `08:00` | Fin de la franja silenciosa (HH:MM) |

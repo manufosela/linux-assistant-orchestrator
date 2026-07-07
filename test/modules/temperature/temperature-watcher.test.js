@@ -46,6 +46,20 @@ function temp(entity_id, state, area_name = '', friendly_name = '') {
   };
 }
 
+/** Helper para construir un sensor de humedad. */
+function hum(entity_id, state, area_name = '', friendly_name = '') {
+  return {
+    entity_id,
+    domain: 'sensor',
+    friendly_name: friendly_name || entity_id,
+    device_class: 'humidity',
+    state: String(state),
+    unit: '%',
+    area_id: area_name,
+    area_name,
+  };
+}
+
 const SUMMER_NOON = new Date(2026, 6, 15, 12, 0); // julio, fuera de quiet
 const WINTER_NOON = new Date(2026, 0, 15, 12, 0); // enero, fuera de quiet
 
@@ -221,5 +235,62 @@ describe('createTemperatureWatcher — robustez', () => {
     await w.checkOnce();
     // Solo cuenta el salón (26º): ni calor ni frío en verano → sin aviso.
     assert.equal(notifier.sent.length, 0);
+  });
+});
+
+describe('createTemperatureWatcher — exterior y humedad', () => {
+  it('incluye temperatura exterior y humedad media en el aviso', async () => {
+    const cache = buildFakeStateCache({ entities: [
+      temp('sensor.cocina', 31.5, 'Cocina'),
+      temp('sensor.ext', 34.2, 'Despacho', 'Sensor Ext 5'),
+      hum('sensor.hum_cocina', 40, 'Cocina'),
+      hum('sensor.hum_salon', 50, 'Salón'),
+    ] });
+    const notifier = buildFakeNotifier();
+    const w = makeWatcher(cache, notifier, { outdoorEntity: 'sensor.ext' });
+    await w.checkOnce();
+    assert.equal(notifier.sent.length, 1);
+    assert.match(notifier.sent[0].text, /🌡️ Exterior: 34\.2º/);
+    assert.match(notifier.sent[0].text, /💧 Humedad media: 45%/);
+  });
+
+  it('el sensor exterior NO cuenta en la media interior', async () => {
+    const cache = buildFakeStateCache({ entities: [
+      temp('sensor.cocina', 29, 'Cocina'),
+      temp('sensor.ext', 40, 'Despacho', 'Sensor Ext 5'),
+    ] });
+    const notifier = buildFakeNotifier();
+    const w = makeWatcher(cache, notifier, { outdoorEntity: 'sensor.ext' });
+    await w.checkOnce();
+    // Si el exterior (40º) contara, la media dispararía; solo cuenta cocina 29º.
+    assert.equal(notifier.sent.length, 0);
+  });
+
+  it('omite el exterior si está unavailable, pero envía el aviso con humedad', async () => {
+    const cache = buildFakeStateCache({ entities: [
+      temp('sensor.cocina', 31.5, 'Cocina'),
+      temp('sensor.ext', 'unavailable', 'Despacho', 'Sensor Ext 5'),
+      hum('sensor.hum_cocina', 40, 'Cocina'),
+    ] });
+    const notifier = buildFakeNotifier();
+    const w = makeWatcher(cache, notifier, { outdoorEntity: 'sensor.ext' });
+    await w.checkOnce();
+    assert.equal(notifier.sent.length, 1);
+    assert.doesNotMatch(notifier.sent[0].text, /Exterior/);
+    assert.match(notifier.sent[0].text, /Humedad media: 40%/);
+  });
+
+  it('excluye los sensores "Ext N" de la humedad interior por patrón', async () => {
+    const cache = buildFakeStateCache({ entities: [
+      temp('sensor.cocina', 31.5, 'Cocina'),
+      hum('sensor.hum_cocina', 40, 'Cocina'),
+      hum('sensor.hum_ext', 90, 'Despacho', 'Sensor Ext 5 Humidity'),
+    ] });
+    const notifier = buildFakeNotifier();
+    const w = makeWatcher(cache, notifier, { excludePattern: '\\bext\\b' });
+    await w.checkOnce();
+    assert.equal(notifier.sent.length, 1);
+    // Humedad media = 40 (solo cocina); el "Ext 5" (90%) queda excluido.
+    assert.match(notifier.sent[0].text, /Humedad media: 40%/);
   });
 });
