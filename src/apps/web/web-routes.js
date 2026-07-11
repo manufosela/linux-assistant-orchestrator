@@ -1,5 +1,6 @@
 import { formatWatchtowerNotification } from '../../modules/watchtower/watchtower-formatter.js';
 import { formatAptHealthNotification } from '../../modules/apt-health/apt-health-formatter.js';
+import { formatAlertmanagerNotification } from '../../modules/alerting/alertmanager-formatter.js';
 import { parsePrometheusIntent } from '../../modules/prometheus/prometheus-intent.js';
 import { formatDownReport } from '../../modules/prometheus/prometheus-formatter.js';
 
@@ -340,6 +341,34 @@ export function registerWebRoutes({ registry, llmService, statusService, rulesRe
     } catch (error) {
       const detail = error?.message ?? 'notify webhook error';
       logger.warn({ err: detail }, '/api/hooks/notify failed');
+      return { status: 502, body: { error: 'Relay failed', detail } };
+    }
+  });
+
+  // POST /api/hooks/alertmanager — recibe alertas de Prometheus Alertmanager y
+  // las reemite a Telegram formateadas en español (LUI-TSK-0073). Reutiliza el
+  // token de Watchtower (?token= o X-Webhook-Token).
+  registry.register('POST', '/api/hooks/alertmanager', async (req, body) => {
+    if (!watchtowerWebhookToken) {
+      return { status: 503, body: { error: 'alertmanager webhook disabled (set WATCHTOWER_WEBHOOK_TOKEN)' } };
+    }
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const token = url.searchParams.get('token') ?? req.headers['x-webhook-token'];
+    if (token !== watchtowerWebhookToken) {
+      logger.warn('alertmanager webhook rejected: bad or missing token');
+      return { status: 401, body: { error: 'unauthorized' } };
+    }
+    if (!notificationService) {
+      return { status: 503, body: { error: 'Notifications not configured' } };
+    }
+    try {
+      const { text, level } = formatAlertmanagerNotification(body);
+      await notificationService.sendNotification({ text, level });
+      logger.info({ level }, 'alertmanager notification relayed');
+      return { status: 200, body: { ok: true } };
+    } catch (error) {
+      const detail = error?.message ?? 'alertmanager webhook error';
+      logger.warn({ err: detail }, '/api/hooks/alertmanager failed');
       return { status: 502, body: { error: 'Relay failed', detail } };
     }
   });
