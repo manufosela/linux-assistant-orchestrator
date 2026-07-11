@@ -53,16 +53,28 @@ export function createTemperatureWatcher({
   summerRoomThreshold = 31.0,
   winterMeanThreshold = 20.1,
   winterRoomThreshold = 20.1,
+  // Histéresis: tras una alerta, la vuelta a la normalidad (aviso de bajada/
+  // subida, útil p.ej. para apagar el aire) NO se declara al cruzar de vuelta el
+  // umbral de alerta, sino al alcanzar este umbral de recuperación.
+  summerRecoveryMean = 25.0,
+  winterRecoveryMean = 22.0,
   reAlertMs = 3 * 60 * 60 * 1000,
   excludePattern = '',
   requireArea = true,
   outdoorEntity = '',
   quietWindowStart = '',
   quietWindowEnd = '',
+  alexaAnnouncer = null,
+  alexaTarget = '',
+  // Franja en la que NUNCA se anuncia por voz (Telegram sí). Más amplia que la
+  // franja silenciosa general. Por defecto 22:00–09:00.
+  alexaQuietStart = '22:00',
+  alexaQuietEnd = '09:00',
   nowFn = () => new Date(),
 }) {
   const excludeRe = buildExcludeRegex(excludePattern);
   const quietWindow = parseQuietWindow(quietWindowStart, quietWindowEnd);
+  const alexaQuietWindow = parseQuietWindow(alexaQuietStart, alexaQuietEnd);
   if (quietWindow) {
     logger.info(
       { start: quietWindowStart, end: quietWindowEnd },
@@ -177,12 +189,14 @@ export function createTemperatureWatcher({
     const { rooms, mean } = reading;
     if (season === 'summer') {
       const hottest = rooms.reduce((a, b) => (b.temp > a.temp ? b : a));
-      const triggered = mean >= summerMeanThreshold || hottest.temp >= summerRoomThreshold;
-      return { triggered, kind: 'calor', room: hottest.name, roomTemp: hottest.temp, mean };
+      const isAlert = mean >= summerMeanThreshold || hottest.temp >= summerRoomThreshold;
+      const isRecovered = mean <= summerRecoveryMean;
+      return { kind: 'calor', room: hottest.name, roomTemp: hottest.temp, mean, isAlert, isRecovered };
     }
     const coldest = rooms.reduce((a, b) => (b.temp < a.temp ? b : a));
-    const triggered = mean <= winterMeanThreshold || coldest.temp <= winterRoomThreshold;
-    return { triggered, kind: 'frio', room: coldest.name, roomTemp: coldest.temp, mean };
+    const isAlert = mean <= winterMeanThreshold || coldest.temp <= winterRoomThreshold;
+    const isRecovered = mean >= winterRecoveryMean;
+    return { kind: 'frio', room: coldest.name, roomTemp: coldest.temp, mean, isAlert, isRecovered };
   }
 
   /**
@@ -214,13 +228,60 @@ export function createTemperatureWatcher({
   }
 
   /**
-   * @param {number} mean
+   * Aviso de vuelta al rango tras una alerta (histéresis). Para calor es una
+   * bajada (p.ej. señal para apagar el aire); para frío, una subida. NO usa la
+   * palabra "normalizada".
+   *
+   * @param {{ kind: 'calor'|'frio', mean: number }} ev
    * @param {{ outdoorTemp?: number|null, humidityMean?: number|null }} [ctx]
    * @returns {string}
    */
-  function buildRecoveryMessage(mean, { outdoorTemp = null, humidityMean = null } = {}) {
-    return `✅ Temperatura normalizada en casa\nTemperatura media: ${fmt1(mean)}º`
+  function buildDropMessage(ev, { outdoorTemp = null, humidityMean = null } = {}) {
+    const head = ev.kind === 'calor' ? '✅ La temperatura ha bajado' : '✅ La temperatura ha subido';
+    return `${head}\nTemperatura media: ${fmt1(ev.mean)}º`
       + buildExtraLine({ outdoorTemp, humidityMean });
+  }
+
+  /**
+   * Texto hablado para Alexa: sin emojis ni HTML, grados enteros, frase natural.
+   *
+   * @param {{ kind: 'calor'|'frio', room: string, roomTemp: number, mean: number }} ev
+   * @param {{ reminder?: boolean }} [opts]
+   * @returns {string}
+   */
+  function buildVoiceMessage(ev, { reminder = false, drop = false } = {}) {
+    if (drop) {
+      return ev.kind === 'calor'
+        ? `La temperatura ha bajado a ${Math.round(ev.mean)} grados.`
+        : `La temperatura ha subido a ${Math.round(ev.mean)} grados.`;
+    }
+    const cond = ev.kind === 'calor'
+      ? (reminder ? 'Sigue haciendo calor en casa' : 'Atención, hace calor en casa')
+      : (reminder ? 'Sigue haciendo frío en casa' : 'Atención, hace frío en casa');
+    return `${cond}. Temperatura en ${ev.room}, ${Math.round(ev.roomTemp)} grados. `
+      + `Media de la casa, ${Math.round(ev.mean)} grados.`;
+  }
+
+  /**
+   * Anuncia la alerta por voz en Alexa (best-effort). Sólo para alertas de
+   * calor/frío, nunca para la recuperación. Si no hay announcer o falla, no
+   * afecta al aviso de Telegram.
+   *
+   * @param {{ kind: 'calor'|'frio', room: string, roomTemp: number, mean: number }} ev
+   * @param {{ reminder?: boolean }} [opts]
+   * @returns {Promise<void>}
+   */
+  async function announceVoice(ev, opts = {}) {
+    if (!alexaAnnouncer) return;
+    if (isInQuietWindow(nowFn(), alexaQuietWindow)) {
+      logger.info('Temperature: anuncio por Alexa suprimido (franja nocturna de voz)');
+      return;
+    }
+    try {
+      await alexaAnnouncer.announce(buildVoiceMessage(ev, opts), alexaTarget ? { target: alexaTarget } : {});
+    } catch (error) {
+      logger.error({ err: error?.message }, 'Temperature Alexa announce failed');
+    }
   }
 
   /**
@@ -253,43 +314,50 @@ export function createTemperatureWatcher({
     // Contexto extra para los mensajes: exterior (si hay lectura) + humedad media.
     const ctx = { outdoorTemp: readOutdoorTemp(), humidityMean: readHumidityMean() };
 
-    if (ev.triggered) {
-      if (!alert.active) {
+    if (!alert.active) {
+      // Entrar en alerta al superar el umbral de alerta.
+      if (ev.isAlert) {
         alert = { active: true, kind: ev.kind, since: now, notifiedAt: 0 };
         if (inQuiet) {
           logger.info({ kind: ev.kind }, 'Temperature alert durante franja silenciosa — notificación suprimida');
         } else {
           logger.warn({ kind: ev.kind, room: ev.room, roomTemp: ev.roomTemp, mean: ev.mean }, 'Temperature alert');
           await notify(buildAlertMessage(ev, ctx), 'warn');
+          await announceVoice(ev);
           alert.notifiedAt = now;
         }
-        return;
-      }
-      // Alerta ya activa.
-      if (inQuiet) return;
-      if (alert.notifiedAt === 0) {
-        // Entró durante quiet hours y ahora ya estamos fuera → notificar.
-        await notify(buildAlertMessage(ev, ctx), 'warn');
-        alert.notifiedAt = now;
-      } else if (now - alert.notifiedAt >= reAlertMs) {
-        await notify(buildAlertMessage(ev, { reminder: true, ...ctx }), 'warn');
-        alert.notifiedAt = now;
-      } else {
-        logger.debug('Temperature alert sigue activa (anti-spam, sin re-aviso)');
       }
       return;
     }
 
-    // No hay condición de alerta.
-    if (alert.active) {
-      const wasNotified = alert.notifiedAt > 0;
+    // Alerta activa: histéresis. Sólo se declara la vuelta al rango al alcanzar
+    // el umbral de recuperación (p.ej. media <= 25 en verano), no al cruzar de
+    // vuelta el umbral de alerta. Es el aviso útil (p.ej. apagar el aire).
+    if (ev.isRecovered) {
       alert = { active: false, kind: null, since: 0, notifiedAt: 0 };
-      if (wasNotified && !inQuiet) {
-        logger.info({ mean: ev.mean }, 'Temperature normalizada');
-        await notify(buildRecoveryMessage(ev.mean, ctx), 'success');
+      if (inQuiet) {
+        logger.info({ mean: ev.mean }, 'Temperature: vuelta al rango durante franja silenciosa (sin aviso)');
       } else {
-        logger.info('Temperature normalizada (recuperación no notificada)');
+        logger.info({ mean: ev.mean }, 'Temperature: vuelta al rango (histéresis)');
+        await notify(buildDropMessage(ev, ctx), 'success');
+        await announceVoice(ev, { drop: true });
       }
+      return;
+    }
+
+    // Sigue en alerta (entre el umbral de recuperación y el de alerta).
+    if (inQuiet) return;
+    if (alert.notifiedAt === 0) {
+      // La alerta se abrió durante la franja silenciosa; ahora fuera, avisar.
+      await notify(buildAlertMessage(ev, ctx), 'warn');
+      await announceVoice(ev);
+      alert.notifiedAt = now;
+    } else if (now - alert.notifiedAt >= reAlertMs) {
+      await notify(buildAlertMessage(ev, { reminder: true, ...ctx }), 'warn');
+      await announceVoice(ev, { reminder: true });
+      alert.notifiedAt = now;
+    } else {
+      logger.debug('Temperature alert sigue activa (anti-spam, sin re-aviso)');
     }
   }
 

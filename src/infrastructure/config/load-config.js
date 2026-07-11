@@ -276,6 +276,10 @@ export function loadConfig(envPath = '.env') {
       // Invierno (frío): alerta si media ≤ mean o alguna habitación ≤ room.
       winterMeanThreshold: Number(process.env.TEMP_WINTER_MEAN_MIN ?? 20.1),
       winterRoomThreshold: Number(process.env.TEMP_WINTER_ROOM_MIN ?? 20.1),
+      // Histéresis: umbral de vuelta al rango tras una alerta (aviso de bajada en
+      // verano, útil p.ej. para apagar el aire). Verano 25, invierno 22.
+      summerRecoveryMean: Number(process.env.TEMP_SUMMER_RECOVERY_MEAN ?? 25.0),
+      winterRecoveryMean: Number(process.env.TEMP_WINTER_RECOVERY_MEAN ?? 22.0),
       // Re-aviso si la alerta persiste (ms). Default 3 h.
       reAlertMs: Number(process.env.TEMP_REALERT_MS ?? 3 * 60 * 60 * 1000),
       // Regex (case-insensitive) para excluir sensores no interiores de la media
@@ -293,6 +297,13 @@ export function loadConfig(envPath = '.env') {
       // Franja silenciosa nocturna (HH:MM). Default 23:00-08:00.
       quietWindowStart: process.env.TEMP_QUIET_START ?? '23:00',
       quietWindowEnd: process.env.TEMP_QUIET_END ?? '08:00',
+      // Anuncios de voz por Alexa además de Telegram (off por defecto).
+      alexaEnabled: process.env.TEMP_ALEXA_ENABLED === 'true',
+      // Echo destino (alias: casa/salon/dormitorio/cocina/show…). Vacío = toda la casa.
+      alexaTarget: process.env.TEMP_ALEXA_TARGET ?? '',
+      // Franja en la que NUNCA suena por voz (Telegram sí). Default 22:00-09:00.
+      alexaQuietStart: process.env.TEMP_ALEXA_QUIET_START ?? '22:00',
+      alexaQuietEnd: process.env.TEMP_ALEXA_QUIET_END ?? '09:00',
     },
   };
 
@@ -353,6 +364,6 @@ function validateConfig(config) {
  * @property {{ enabled: boolean, host: string, port: number }} web
  * @property {{ search: { baseUrl: string, apiKey: string }, urlFetch: { allowPrivateNetworks: boolean, privateAllowlist: string[] } }} webTools
  * @property {{ baseUrl: string, token: string, language: string, agentId: string }} homeAssistant
- * @property {{ enabled: boolean, checkIntervalMs: number, summerMonths: number[], winterMonths: number[], summerMeanThreshold: number, summerRoomThreshold: number, winterMeanThreshold: number, winterRoomThreshold: number, reAlertMs: number, excludePattern: string, requireArea: boolean, outdoorEntity: string, quietWindowStart: string, quietWindowEnd: string }} temperature
+ * @property {{ enabled: boolean, checkIntervalMs: number, summerMonths: number[], winterMonths: number[], summerMeanThreshold: number, summerRoomThreshold: number, winterMeanThreshold: number, winterRoomThreshold: number, summerRecoveryMean: number, winterRecoveryMean: number, reAlertMs: number, excludePattern: string, requireArea: boolean, outdoorEntity: string, quietWindowStart: string, quietWindowEnd: string, alexaEnabled: boolean, alexaTarget: string, alexaQuietStart: string, alexaQuietEnd: string }} temperature
  * @property {{ credentialsPath: string, tokensPath: string }} google
  */
