@@ -494,8 +494,14 @@ async function main() {
       excludePattern: config.temperature.excludePattern,
       requireArea: config.temperature.requireArea,
       outdoorEntity: config.temperature.outdoorEntity,
+      summerRecoveryMean: config.temperature.summerRecoveryMean,
+      winterRecoveryMean: config.temperature.winterRecoveryMean,
       quietWindowStart: config.temperature.quietWindowStart,
       quietWindowEnd: config.temperature.quietWindowEnd,
+      alexaAnnouncer: config.temperature.alexaEnabled ? alexaAnnouncer : null,
+      alexaTarget: config.temperature.alexaTarget,
+      alexaQuietStart: config.temperature.alexaQuietStart,
+      alexaQuietEnd: config.temperature.alexaQuietEnd,
     });
     temperatureWatcher.start();
   } else if (config.temperature.enabled) {

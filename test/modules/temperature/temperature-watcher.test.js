@@ -152,16 +152,22 @@ describe('createTemperatureWatcher — anti-spam y recuperación', () => {
     assert.equal(notifier.sent.length, 1, 'solo un aviso pese a 3 ticks en alerta');
   });
 
-  it('avisa de la recuperación cuando la temperatura se normaliza', async () => {
+  it('histéresis: no recupera al bajar de 30, solo al llegar a 25; sin "normalizada"', async () => {
     const cache = buildFakeStateCache({ entities: [temp('sensor.cocina', 31.5, 'Cocina')] });
     const notifier = buildFakeNotifier();
     const w = makeWatcher(cache, notifier);
     await w.checkOnce();
-    assert.equal(notifier.sent.length, 1);
-    cache.setEntities([temp('sensor.cocina', 26, 'Cocina')]);
+    assert.equal(notifier.sent.length, 1, 'alerta inicial');
+    // Baja a 28 (entre 25 y 30): sigue en alerta, sin nuevo aviso.
+    cache.setEntities([temp('sensor.cocina', 28, 'Cocina')]);
+    await w.checkOnce();
+    assert.equal(notifier.sent.length, 1, 'a 28 aún no recupera');
+    // Baja a 24 (≤25): aviso de bajada, NO "normalizada".
+    cache.setEntities([temp('sensor.cocina', 24, 'Cocina')]);
     await w.checkOnce();
     assert.equal(notifier.sent.length, 2);
-    assert.match(notifier.sent[1].text, /normalizada/);
+    assert.match(notifier.sent[1].text, /ha bajado/);
+    assert.doesNotMatch(notifier.sent[1].text, /normalizada/);
     assert.equal(notifier.sent[1].level, 'success');
   });
 });
@@ -292,5 +298,49 @@ describe('createTemperatureWatcher — exterior y humedad', () => {
     assert.equal(notifier.sent.length, 1);
     // Humedad media = 40 (solo cocina); el "Ext 5" (90%) queda excluido.
     assert.match(notifier.sent[0].text, /Humedad media: 40%/);
+  });
+});
+
+describe('createTemperatureWatcher — Alexa', () => {
+  function buildFakeAnnouncer() {
+    const calls = [];
+    return { calls, announcer: { announce: async (message, opts) => { calls.push({ message, opts }); }, listTargetAliases: () => [] } };
+  }
+
+  it('anuncia por voz la alerta, sin emojis ni símbolo de grado', async () => {
+    const cache = buildFakeStateCache({ entities: [temp('sensor.cocina', 31.5, 'Cocina')] });
+    const notifier = buildFakeNotifier();
+    const alexa = buildFakeAnnouncer();
+    const w = makeWatcher(cache, notifier, { alexaAnnouncer: alexa.announcer });
+    await w.checkOnce();
+    assert.equal(notifier.sent.length, 1);
+    assert.equal(alexa.calls.length, 1);
+    assert.match(alexa.calls[0].message, /hace calor/i);
+    assert.match(alexa.calls[0].message, /grados/);
+    assert.doesNotMatch(alexa.calls[0].message, /[🌡️🥶º]/);
+  });
+
+  it('en franja de voz (22:00-09:00) NO suena por Alexa pero SÍ por Telegram', async () => {
+    const cache = buildFakeStateCache({ entities: [temp('sensor.cocina', 31.5, 'Cocina')] });
+    const notifier = buildFakeNotifier();
+    const alexa = buildFakeAnnouncer();
+    // 22:30: fuera de la franja general (23-08) pero dentro de la de voz (22-09).
+    const now = new Date(2026, 6, 15, 22, 30);
+    const w = makeWatcher(cache, notifier, { alexaAnnouncer: alexa.announcer, now });
+    await w.checkOnce();
+    assert.equal(notifier.sent.length, 1, 'Telegram sí a las 22:30');
+    assert.equal(alexa.calls.length, 0, 'Alexa no a las 22:30');
+  });
+
+  it('anuncia por voz el aviso de bajada (a los 24 grados)', async () => {
+    const cache = buildFakeStateCache({ entities: [temp('sensor.cocina', 31.5, 'Cocina')] });
+    const notifier = buildFakeNotifier();
+    const alexa = buildFakeAnnouncer();
+    const w = makeWatcher(cache, notifier, { alexaAnnouncer: alexa.announcer });
+    await w.checkOnce();
+    cache.setEntities([temp('sensor.cocina', 24, 'Cocina')]);
+    await w.checkOnce();
+    assert.equal(alexa.calls.length, 2);
+    assert.match(alexa.calls[1].message, /ha bajado a 24 grados/);
   });
 });
