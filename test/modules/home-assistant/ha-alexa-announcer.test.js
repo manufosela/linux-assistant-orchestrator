@@ -54,9 +54,7 @@ describe('createAlexaAnnouncer', () => {
       ['dormitorio', 'alexa_media_echo_dormitorio'],
       ['cocina', 'alexa_media_alexa_cocina'],
       ['pop', 'alexa_media_echo_pop_de_manuel'],
-      ['pueblo', 'alexa_media_echo_pueblo'],
-      ['show', 'alexa_media_echo_show_de_manu'],
-      ['manu', 'alexa_media_echo_show_de_manu'],
+      ['despacho', 'alexa_media_echo_despacho'],
       ['firetv', 'alexa_media_fire_tv_de_manuel'],
       ['casa', 'alexa_media_en_toda_la_casa'],
       ['todo', 'alexa_media_en_toda_la_casa'],
@@ -195,13 +193,14 @@ describe('parseAnnounceInvocation', () => {
 });
 
 describe('listTargetChoices', () => {
-  it('returns the 8 destinations including broadcast (casa)', () => {
+  it('returns the 7 destinations including broadcast (casa)', () => {
     const choices = listTargetChoices();
-    assert.equal(choices.length, 8);
+    assert.equal(choices.length, 7);
     const aliases = choices.map((c) => c.alias);
     assert.ok(aliases.includes('salon'));
+    assert.ok(aliases.includes('despacho'));
     assert.ok(aliases.includes('casa'));
-    assert.ok(aliases.includes('firetv'));
+    assert.ok(!aliases.includes('pueblo'));
   });
 
   it('every choice has alias, label and emoji', () => {

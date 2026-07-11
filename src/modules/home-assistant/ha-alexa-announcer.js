@@ -16,9 +16,7 @@ const TARGET_ALIASES = {
   dormitorio: 'echo_dormitorio',
   cocina: 'alexa_cocina',
   pop: 'echo_pop_de_manuel',
-  pueblo: 'echo_pueblo',
-  show: 'echo_show_de_manu',
-  manu: 'echo_show_de_manu',
+  despacho: 'echo_despacho',
   // other endpoints
   firetv: 'fire_tv_de_manuel',
 };
@@ -179,9 +177,8 @@ export function listTargetChoices() {
     { alias: 'salon', label: 'Salón', emoji: '🛋️' },
     { alias: 'dormitorio', label: 'Dormitorio', emoji: '🛏️' },
     { alias: 'cocina', label: 'Cocina', emoji: '🍳' },
-    { alias: 'show', label: 'Echo Show', emoji: '📺' },
+    { alias: 'despacho', label: 'Despacho', emoji: '💻' },
     { alias: 'pop', label: 'Echo Pop', emoji: '🎵' },
-    { alias: 'pueblo', label: 'Pueblo', emoji: '🏡' },
     { alias: 'firetv', label: 'Fire TV', emoji: '📡' },
     { alias: 'casa', label: 'Toda la casa', emoji: '🏠' },
   ];

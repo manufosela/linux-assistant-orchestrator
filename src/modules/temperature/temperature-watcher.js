@@ -277,10 +277,17 @@ export function createTemperatureWatcher({
       logger.info('Temperature: anuncio por Alexa suprimido (franja nocturna de voz)');
       return;
     }
-    try {
-      await alexaAnnouncer.announce(buildVoiceMessage(ev, opts), alexaTarget ? { target: alexaTarget } : {});
-    } catch (error) {
-      logger.error({ err: error?.message }, 'Temperature Alexa announce failed');
+    const message = buildVoiceMessage(ev, opts);
+    // alexaTarget puede ser una lista separada por comas (p.ej. "casa,despacho").
+    const targets = alexaTarget
+      ? alexaTarget.split(',').map((t) => t.trim()).filter(Boolean)
+      : [''];
+    for (const target of targets) {
+      try {
+        await alexaAnnouncer.announce(message, target ? { target } : {});
+      } catch (error) {
+        logger.error({ err: error?.message, target }, 'Temperature Alexa announce failed');
+      }
     }
   }
 
