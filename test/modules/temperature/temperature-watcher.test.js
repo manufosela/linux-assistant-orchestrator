@@ -343,4 +343,14 @@ describe('createTemperatureWatcher — Alexa', () => {
     assert.equal(alexa.calls.length, 2);
     assert.match(alexa.calls[1].message, /ha bajado a 24 grados/);
   });
+
+  it('con TEMP_ALEXA_TARGET lista (casa,despacho) anuncia a cada destino', async () => {
+    const cache = buildFakeStateCache({ entities: [temp('sensor.cocina', 31.5, 'Cocina')] });
+    const notifier = buildFakeNotifier();
+    const alexa = buildFakeAnnouncer();
+    const w = makeWatcher(cache, notifier, { alexaAnnouncer: alexa.announcer, alexaTarget: 'casa,despacho' });
+    await w.checkOnce();
+    assert.equal(alexa.calls.length, 2);
+    assert.deepEqual(alexa.calls.map((c) => c.opts?.target).sort(), ['casa', 'despacho']);
+  });
 });
