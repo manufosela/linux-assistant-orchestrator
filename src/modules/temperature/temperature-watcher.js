@@ -56,6 +56,7 @@ export function createTemperatureWatcher({
   reAlertMs = 3 * 60 * 60 * 1000,
   excludePattern = '',
   requireArea = true,
+  outdoorEntity = '',
   quietWindowStart = '',
   quietWindowEnd = '',
   nowFn = () => new Date(),
@@ -97,6 +98,8 @@ export function createTemperatureWatcher({
     const sensors = stateCache.findEntities({ deviceClass: 'temperature' });
     const valid = sensors.filter((s) =>
       isFiniteNumber(s.state)
+      // El sensor exterior no cuenta como interior aunque tenga área asignada.
+      && s.entity_id !== outdoorEntity
       && !isExcluded(s, excludeRe)
       // Sólo sensores ubicados en una habitación: descarta duplicados y
       // dispositivos sin área (que suelen dar valores basura tipo 0.0 y
@@ -120,6 +123,41 @@ export function createTemperatureWatcher({
       temp: vals.reduce((acc, v) => acc + v, 0) / vals.length,
     }));
     return { rooms, mean, sensorCount: valid.length };
+  }
+
+  /**
+   * Media de humedad relativa interior (device_class=humidity), con el mismo
+   * filtro que la temperatura: descarta no numéricos, excluidos por patrón
+   * (incluye exteriores tipo "Ext N") y —si requireArea— los sin habitación.
+   *
+   * @returns {number | null}
+   */
+  function readHumidityMean() {
+    const sensors = stateCache.findEntities({ deviceClass: 'humidity' });
+    const valid = sensors.filter((s) =>
+      isFiniteNumber(s.state)
+      && s.entity_id !== outdoorEntity
+      && !isExcluded(s, excludeRe)
+      && (!requireArea || Boolean(s.area_name && s.area_name.trim())),
+    );
+    if (valid.length === 0) return null;
+    const values = valid.map((s) => Number(s.state));
+    return values.reduce((acc, v) => acc + v, 0) / values.length;
+  }
+
+  /**
+   * Temperatura del sensor exterior configurado (TEMP_OUTDOOR_ENTITY), o null si
+   * no hay entity configurado o su lectura no es válida (unavailable).
+   *
+   * @returns {number | null}
+   */
+  function readOutdoorTemp() {
+    if (!outdoorEntity) return null;
+    const sensor = stateCache
+      .findEntities({ deviceClass: 'temperature' })
+      .find((s) => s.entity_id === outdoorEntity);
+    if (!sensor || !isFiniteNumber(sensor.state)) return null;
+    return Number(sensor.state);
   }
 
   /** @returns {'summer'|'winter'|null} */
@@ -148,24 +186,41 @@ export function createTemperatureWatcher({
   }
 
   /**
-   * @param {{ kind: 'calor'|'frio', room: string, roomTemp: number, mean: number }} ev
-   * @param {{ reminder?: boolean }} [opts]
+   * Línea extra opcional: temperatura exterior y/o humedad media interior.
+   * Vacía si no hay ninguna de las dos.
+   *
+   * @param {{ outdoorTemp?: number|null, humidityMean?: number|null }} [ctx]
    * @returns {string}
    */
-  function buildAlertMessage(ev, { reminder = false } = {}) {
+  function buildExtraLine({ outdoorTemp = null, humidityMean = null } = {}) {
+    const parts = [];
+    if (outdoorTemp != null) parts.push(`🌡️ Exterior: ${fmt1(outdoorTemp)}º`);
+    if (humidityMean != null) parts.push(`💧 Humedad media: ${Math.round(humidityMean)}%`);
+    return parts.length ? `\n${parts.join(' · ')}` : '';
+  }
+
+  /**
+   * @param {{ kind: 'calor'|'frio', room: string, roomTemp: number, mean: number }} ev
+   * @param {{ reminder?: boolean, outdoorTemp?: number|null, humidityMean?: number|null }} [opts]
+   * @returns {string}
+   */
+  function buildAlertMessage(ev, { reminder = false, outdoorTemp = null, humidityMean = null } = {}) {
     const head = ev.kind === 'calor'
       ? (reminder ? '🌡️ Sigue haciendo calor en casa' : '🌡️ Hace calor en casa')
       : (reminder ? '🥶 Sigue haciendo frío en casa' : '🥶 Hace frío en casa');
     const since = reminder ? ` (desde hace ${formatDuration(nowFn().getTime() - alert.since)})` : '';
-    return `${head}${since}\nTemperatura ${ev.room}: ${fmt1(ev.roomTemp)}º | Temperatura media: ${fmt1(ev.mean)}º`;
+    return `${head}${since}\nTemperatura ${ev.room}: ${fmt1(ev.roomTemp)}º | Temperatura media: ${fmt1(ev.mean)}º`
+      + buildExtraLine({ outdoorTemp, humidityMean });
   }
 
   /**
    * @param {number} mean
+   * @param {{ outdoorTemp?: number|null, humidityMean?: number|null }} [ctx]
    * @returns {string}
    */
-  function buildRecoveryMessage(mean) {
-    return `✅ Temperatura normalizada en casa\nTemperatura media: ${fmt1(mean)}º`;
+  function buildRecoveryMessage(mean, { outdoorTemp = null, humidityMean = null } = {}) {
+    return `✅ Temperatura normalizada en casa\nTemperatura media: ${fmt1(mean)}º`
+      + buildExtraLine({ outdoorTemp, humidityMean });
   }
 
   /**
@@ -195,6 +250,8 @@ export function createTemperatureWatcher({
     const ev = evaluate(reading, season);
     const now = nowFn().getTime();
     const inQuiet = isInQuietWindow(nowFn(), quietWindow);
+    // Contexto extra para los mensajes: exterior (si hay lectura) + humedad media.
+    const ctx = { outdoorTemp: readOutdoorTemp(), humidityMean: readHumidityMean() };
 
     if (ev.triggered) {
       if (!alert.active) {
@@ -203,7 +260,7 @@ export function createTemperatureWatcher({
           logger.info({ kind: ev.kind }, 'Temperature alert durante franja silenciosa — notificación suprimida');
         } else {
           logger.warn({ kind: ev.kind, room: ev.room, roomTemp: ev.roomTemp, mean: ev.mean }, 'Temperature alert');
-          await notify(buildAlertMessage(ev), 'warn');
+          await notify(buildAlertMessage(ev, ctx), 'warn');
           alert.notifiedAt = now;
         }
         return;
@@ -212,10 +269,10 @@ export function createTemperatureWatcher({
       if (inQuiet) return;
       if (alert.notifiedAt === 0) {
         // Entró durante quiet hours y ahora ya estamos fuera → notificar.
-        await notify(buildAlertMessage(ev), 'warn');
+        await notify(buildAlertMessage(ev, ctx), 'warn');
         alert.notifiedAt = now;
       } else if (now - alert.notifiedAt >= reAlertMs) {
-        await notify(buildAlertMessage(ev, { reminder: true }), 'warn');
+        await notify(buildAlertMessage(ev, { reminder: true, ...ctx }), 'warn');
         alert.notifiedAt = now;
       } else {
         logger.debug('Temperature alert sigue activa (anti-spam, sin re-aviso)');
@@ -229,7 +286,7 @@ export function createTemperatureWatcher({
       alert = { active: false, kind: null, since: 0, notifiedAt: 0 };
       if (wasNotified && !inQuiet) {
         logger.info({ mean: ev.mean }, 'Temperature normalizada');
-        await notify(buildRecoveryMessage(ev.mean), 'success');
+        await notify(buildRecoveryMessage(ev.mean, ctx), 'success');
       } else {
         logger.info('Temperature normalizada (recuperación no notificada)');
       }

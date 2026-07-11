@@ -493,6 +493,7 @@ async function main() {
       reAlertMs: config.temperature.reAlertMs,
       excludePattern: config.temperature.excludePattern,
       requireArea: config.temperature.requireArea,
+      outdoorEntity: config.temperature.outdoorEntity,
       quietWindowStart: config.temperature.quietWindowStart,
       quietWindowEnd: config.temperature.quietWindowEnd,
     });
