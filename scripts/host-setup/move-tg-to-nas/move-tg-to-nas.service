@@ -1,0 +1,7 @@
+[Unit]
+Description=Mueve descargas Telegram (local) al NAS segun categoria
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/move-tg-to-nas.sh
