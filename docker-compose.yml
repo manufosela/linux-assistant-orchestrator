@@ -69,6 +69,15 @@ services:
       CLUSTER_N2_IP: ${CLUSTER_N2_IP:-}
       CLUSTER_N3_IP: ${CLUSTER_N3_IP:-}
       CLUSTER_N4_IP: ${CLUSTER_N4_IP:-}
+      # LUI-BUG-0010: el estado del watcher (state.json, derivado de este path)
+      # DEBE vivir en el volumen persistente /data/config; si no, cada deploy
+      # reinicia el contenedor con estado vacío y re-notifica los nodos ya caídos.
+      CLUSTER_HISTORY_PATH: ${CLUSTER_HISTORY_PATH:-/data/config/cluster-history.json}
+      # LUI-TSK-0080: nodos silenciados (apagados a propósito), p.ej. "n4".
+      CLUSTER_MUTED_NODES: ${CLUSTER_MUTED_NODES:-}
+      # Franja silenciosa nocturna del watcher (HH:MM). Vacío = sin filtro.
+      CLUSTER_QUIET_START: ${CLUSTER_QUIET_START:-}
+      CLUSTER_QUIET_END: ${CLUSTER_QUIET_END:-}
 
       # --- Prometheus down-check (optional; on-demand "is anything down?") ---
       # Opt-in: set PROMETHEUS_ENABLED=true and PROMETHEUS_BASE_URL to your
