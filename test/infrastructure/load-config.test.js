@@ -6,7 +6,7 @@ import { loadConfig } from '../../src/infrastructure/config/load-config.js';
 // Use a non-existent env file so loadDotEnv() is a no-op and the test only
 // exercises process.env.
 const NO_ENV = '.env.does-not-exist';
-const CLUSTER_KEYS = ['CLUSTER_ENABLED', 'CLUSTER_N2_IP', 'CLUSTER_N3_IP', 'CLUSTER_N4_IP'];
+const CLUSTER_KEYS = ['CLUSTER_ENABLED', 'CLUSTER_N2_IP', 'CLUSTER_N3_IP', 'CLUSTER_N4_IP', 'CLUSTER_MUTED_NODES'];
 
 describe('loadConfig — cluster validation', () => {
   /** @type {Record<string, string | undefined>} */
@@ -41,6 +41,19 @@ describe('loadConfig — cluster validation', () => {
     const config = loadConfig(NO_ENV);
     assert.equal(config.cluster.enabled, true);
     assert.equal(config.cluster.n2Ip, '10.0.0.1');
+  });
+
+  it('mutedNodes por defecto es lista vacía', () => {
+    process.env.CLUSTER_ENABLED = 'false';
+    const config = loadConfig(NO_ENV);
+    assert.deepEqual(config.cluster.mutedNodes, []);
+  });
+
+  it('parsea CLUSTER_MUTED_NODES ("n4, n3") a lista limpia', () => {
+    process.env.CLUSTER_ENABLED = 'false';
+    process.env.CLUSTER_MUTED_NODES = 'n4, n3';
+    const config = loadConfig(NO_ENV);
+    assert.deepEqual(config.cluster.mutedNodes, ['n4', 'n3']);
   });
 });
 

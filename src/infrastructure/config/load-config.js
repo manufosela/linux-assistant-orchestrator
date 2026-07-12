@@ -96,6 +96,13 @@ export function loadConfig(envPath = '.env') {
       n2Ip: process.env.CLUSTER_N2_IP ?? '',
       n3Ip: process.env.CLUSTER_N3_IP ?? '',
       n4Ip: process.env.CLUSTER_N4_IP ?? '',
+      // LUI-TSK-0080: nodos silenciados por completo (apagados a propósito, p.ej.
+      // n4 pendiente de pasta térmica). Sus servicios no se sondean ni alertan.
+      // Lista separada por comas, p.ej. "n4" o "n4,n3". Vacío = monitoriza todo.
+      mutedNodes: (process.env.CLUSTER_MUTED_NODES ?? '')
+        .split(',')
+        .map((n) => n.trim())
+        .filter(Boolean),
       historyPath:
         process.env.CLUSTER_HISTORY_PATH ?? join(homedir(), '.config', 'luis', 'cluster-history.json'),
       // LUI-TSK-0067: franja silenciosa diaria. Cualquier down que ocurra
