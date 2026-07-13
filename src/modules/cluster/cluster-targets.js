@@ -9,10 +9,14 @@
  * `CLUSTER_N2_IP`/`CLUSTER_N3_IP`/`CLUSTER_N4_IP` env vars, surfaced through
  * config). No LAN address is hardcoded so the repo is environment-agnostic.
  *
- * @param {{ n2Ip: string, n3Ip: string, n4Ip: string }} ips
+ * `mutedNodes` silencia por completo uno o más nodos (p.ej. n4 apagado a
+ * propósito): sus targets no se construyen, así que el watcher ni los sondea
+ * ni alerta de ellos. La coincidencia es case/space-insensitive.
+ *
+ * @param {{ n2Ip: string, n3Ip: string, n4Ip: string, mutedNodes?: string[] }} ips
  * @returns {ClusterTarget[]}
  */
-export function buildClusterTargets({ n2Ip, n3Ip, n4Ip } = {}) {
+export function buildClusterTargets({ n2Ip, n3Ip, n4Ip, mutedNodes = [] } = {}) {
   if (!n2Ip || !n3Ip || !n4Ip) {
     throw new Error(
       'buildClusterTargets requires n2Ip, n3Ip and n4Ip. ' +
@@ -24,7 +28,11 @@ export function buildClusterTargets({ n2Ip, n3Ip, n4Ip } = {}) {
   const ipN3 = n3Ip;
   const ipN4 = n4Ip;
 
-  return [
+  const muted = new Set(
+    (mutedNodes ?? []).map((n) => String(n).trim().toLowerCase()).filter(Boolean),
+  );
+
+  const targets = [
     // LiteLLM's /health requires the API key (401 without it). /health/liveliness
     // is the unauthenticated liveness probe meant exactly for monitoring.
     { id: 'n2:litellm', node: 'n2', service: 'LiteLLM', host: ipN2, port: 8080, kind: 'http', path: '/health/liveliness' },
@@ -36,6 +44,8 @@ export function buildClusterTargets({ n2Ip, n3Ip, n4Ip } = {}) {
     { id: 'n4:qdrant', node: 'n4', service: 'Qdrant', host: ipN4, port: 6333, kind: 'http', path: '/healthz' },
     { id: 'n4:postgres', node: 'n4', service: 'Postgres', host: ipN4, port: 5432, kind: 'tcp' },
   ];
+
+  return muted.size ? targets.filter((t) => !muted.has(t.node)) : targets;
 }
 
 /**
