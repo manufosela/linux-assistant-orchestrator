@@ -1,6 +1,7 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { tryFastPath } from '../../../src/modules/home-assistant/ha-fast-path.js';
+import { createHouseAverageFilter } from '../../../src/modules/home-assistant/sensor-filter.js';
 
 /**
  * Builds an in-memory state cache stub.
@@ -194,5 +195,46 @@ describe('home-assistant — fast path', () => {
     assert.equal(result?.handled, true);
     assert.match(result.speech.toLowerCase(), /no pude/);
     assert.match(result.speech, /HA timeout/);
+  });
+});
+
+describe('home-assistant — media de casa con filtro (LUI-TSK-0081)', () => {
+  /** @type {ReturnType<typeof makeCache>} */
+  let cache;
+  beforeEach(() => { cache = makeCache(FIXTURE); });
+
+  it('sin filtro la cocina cuenta en la media (comportamiento previo intacto)', async () => {
+    const result = await tryFastPath({ text: 'qué temperatura media hace en casa', stateCache: cache });
+    // (24.6 despacho + 23.8 cocina) / 2 = 24.2
+    assert.match(result.speech, /24\.2/);
+  });
+
+  it('con el filtro, la cocina queda fuera de la media', async () => {
+    const houseAverageFilter = createHouseAverageFilter({ excludePattern: 'cocina' });
+    const result = await tryFastPath({ text: 'qué temperatura media hace en casa', stateCache: cache, houseAverageFilter });
+    // Solo cuenta el despacho: 24.6
+    assert.match(result.speech, /24\.6/);
+    assert.doesNotMatch(result.speech, /24\.2/);
+  });
+
+  it('preguntar explícitamente por la cocina SÍ responde (la consulta por área no se filtra)', async () => {
+    const houseAverageFilter = createHouseAverageFilter({ excludePattern: 'cocina' });
+    const result = await tryFastPath({ text: 'qué temperatura hace en la cocina', stateCache: cache, houseAverageFilter });
+    assert.equal(result?.handled, true);
+    assert.match(result.speech, /23\.8/);
+  });
+
+  it('el filtro también aplica a la humedad media', async () => {
+    const houseAverageFilter = createHouseAverageFilter({ excludePattern: 'despacho' });
+    const result = await tryFastPath({ text: 'qué humedad promedio hay en toda la casa', stateCache: cache, houseAverageFilter });
+    // La única humedad del fixture está en el despacho → sin lecturas tras filtrar.
+    assert.match(result.speech.toLowerCase(), /no tengo lecturas/);
+  });
+
+  it('si el filtro deja fuera todo, responde sin inventar datos', async () => {
+    const houseAverageFilter = createHouseAverageFilter({ excludePattern: '.' });
+    const result = await tryFastPath({ text: 'qué temperatura media hace en casa', stateCache: cache, houseAverageFilter });
+    assert.equal(result?.handled, true);
+    assert.match(result.speech.toLowerCase(), /no tengo lecturas/);
   });
 });

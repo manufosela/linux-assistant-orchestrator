@@ -40,6 +40,9 @@
  * @returns {TemperatureWatcher}
  */
 import { isInQuietWindow, parseQuietWindow, formatDuration } from '../cluster/cluster-watcher.js';
+// Filtro compartido con el fast path (LUI-TSK-0081): la media que se avisa y la
+// que se responde al preguntar deben salir del MISMO criterio.
+import { buildExcludeRegex, isExcluded } from '../home-assistant/sensor-filter.js';
 
 export function createTemperatureWatcher({
   logger,
@@ -390,31 +393,6 @@ function isFiniteNumber(value) {
   if (value == null) return false;
   if (value === 'unknown' || value === 'unavailable') return false;
   return Number.isFinite(Number(value));
-}
-
-/**
- * @param {import('../home-assistant/ha-state-cache.js').EntitySnapshot} sensor
- * @param {RegExp|null} excludeRe
- * @returns {boolean}
- */
-function isExcluded(sensor, excludeRe) {
-  if (!excludeRe) return false;
-  const haystack = `${sensor.friendly_name ?? ''} ${sensor.entity_id ?? ''} ${sensor.area_name ?? ''}`;
-  return excludeRe.test(haystack);
-}
-
-/**
- * @param {string} pattern
- * @returns {RegExp|null}
- */
-function buildExcludeRegex(pattern) {
-  const p = String(pattern ?? '').trim();
-  if (!p) return null;
-  try {
-    return new RegExp(p, 'i');
-  } catch {
-    return null;
-  }
 }
 
 /**

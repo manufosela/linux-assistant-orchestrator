@@ -22,10 +22,11 @@ const ACTIONABLE_DOMAINS = ['light', 'switch', 'media_player', 'cover', 'fan', '
  *   stateCache: import('./ha-state-cache.js').HomeAssistantStateCache,
  *   haClient?: import('./ha-client.js').HomeAssistantClient,
  *   logger?: import('pino').Logger,
+ *   houseAverageFilter?: (sensor: object) => boolean,
  * }} input
  * @returns {Promise<FastPathResult | null>}
  */
-export async function tryFastPath({ text, stateCache, haClient, logger }) {
+export async function tryFastPath({ text, stateCache, haClient, logger, houseAverageFilter }) {
   const trimmed = String(text ?? '').trim();
   if (!trimmed) return null;
   const lower = trimmed.toLowerCase().replace(/[?¿!¡.,]/g, '');
@@ -36,7 +37,7 @@ export async function tryFastPath({ text, stateCache, haClient, logger }) {
 
   const houseAvg = matchesHouseAverage(lower);
   if (houseAvg) {
-    return handleHouseAverage(stateCache, houseAvg.deviceClass);
+    return handleHouseAverage(stateCache, houseAvg.deviceClass, houseAverageFilter);
   }
 
   const sensorByArea = matchesSensorByArea(lower);
@@ -96,13 +97,24 @@ function matchesHouseAverage(lower) {
 }
 
 /**
+ * Media de la casa. `houseAverageFilter` (opcional) decide qué sensores cuentan;
+ * es el MISMO filtro que usa el temperature-watcher, para que la respuesta a
+ * "qué temperatura media hace en casa" y el aviso automático no se contradigan
+ * (p.ej. la cocina y los exteriores quedan fuera de ambos). Sin filtro, se
+ * mantiene el comportamiento previo: cuentan todos los sensores con lectura.
+ *
+ * Ojo: sólo aplica a la media de la casa. Preguntar explícitamente por un área
+ * ("qué temperatura hace en la cocina") sigue respondiendo con su lectura.
+ *
  * @param {import('./ha-state-cache.js').HomeAssistantStateCache} stateCache
  * @param {'temperature' | 'humidity'} deviceClass
+ * @param {(sensor: object) => boolean} [houseAverageFilter]
  * @returns {FastPathResult}
  */
-function handleHouseAverage(stateCache, deviceClass) {
+function handleHouseAverage(stateCache, deviceClass, houseAverageFilter) {
   const sensors = stateCache.findEntities({ deviceClass });
-  const valid = sensors.filter((s) => isFiniteNumber(s.state));
+  const included = houseAverageFilter ? sensors.filter(houseAverageFilter) : sensors;
+  const valid = included.filter((s) => isFiniteNumber(s.state));
   if (valid.length === 0) {
     return {
       handled: true,

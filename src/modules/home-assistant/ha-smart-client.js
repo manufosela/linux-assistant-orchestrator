@@ -12,10 +12,11 @@ import { tryFastPath } from './ha-fast-path.js';
  *   haClient: import('./ha-client.js').HomeAssistantClient,
  *   stateCache?: import('./ha-state-cache.js').HomeAssistantStateCache,
  *   logger?: import('pino').Logger,
+ *   houseAverageFilter?: (sensor: object) => boolean,
  * }} deps
  * @returns {import('./ha-client.js').HomeAssistantClient}
  */
-export function createSmartHomeAssistantClient({ haClient, stateCache, logger }) {
+export function createSmartHomeAssistantClient({ haClient, stateCache, logger, houseAverageFilter }) {
   /**
    * @param {string} text
    * @param {{ conversationId?: string, agentId?: string }} [options]
@@ -25,7 +26,7 @@ export function createSmartHomeAssistantClient({ haClient, stateCache, logger })
     if (stateCache && stateCache.areaCount > 0) {
       logger?.info({ text: text.slice(0, 80) }, 'HA smart-client: trying fast path');
       try {
-        const fast = await tryFastPath({ text, stateCache, haClient, logger });
+        const fast = await tryFastPath({ text, stateCache, haClient, logger, houseAverageFilter });
         if (fast?.handled) {
           logger?.info({ text: text.slice(0, 80) }, 'HA fast path handled query');
           return {
