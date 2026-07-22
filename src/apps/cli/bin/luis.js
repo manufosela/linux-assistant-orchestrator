@@ -16,6 +16,7 @@ import { createWebSearchService } from '../../../modules/web/web-search.js';
 import { createHomeAssistantClient } from '../../../modules/home-assistant/ha-client.js';
 import { createHomeAssistantStateCache } from '../../../modules/home-assistant/ha-state-cache.js';
 import { createSmartHomeAssistantClient } from '../../../modules/home-assistant/ha-smart-client.js';
+import { createHouseAverageFilter } from '../../../modules/home-assistant/sensor-filter.js';
 import { createAlexaAnnouncer } from '../../../modules/home-assistant/ha-alexa-announcer.js';
 import { createGoogleAuth } from '../../../modules/google/google-auth.js';
 import { buildClusterTargets } from '../../../modules/cluster/cluster-targets.js';
@@ -133,6 +134,12 @@ async function main() {
       haClient: baseClient,
       stateCache,
       logger,
+      // Mismo criterio que el temperature-watcher (LUI-TSK-0081).
+      houseAverageFilter: createHouseAverageFilter({
+        excludePattern: config.temperature.excludePattern,
+        outdoorEntity: config.temperature.outdoorEntity,
+        requireArea: config.temperature.requireArea,
+      }),
     });
     alexaAnnouncer = createAlexaAnnouncer({ haClient: baseClient, logger });
   }
