@@ -259,6 +259,9 @@ export function createBatteryTracker({
     if (job) return;
     job = scheduler.schedule(checkOnce, checkIntervalMs, 'battery-tracker');
     logger?.info({ intervalMs: checkIntervalMs }, 'Battery tracker started');
+    // Comprobación inicial inmediata: fija la línea base e importa el seed sin
+    // esperar al primer intervalo (evita perder un cambio hecho en la 1ª hora).
+    checkOnce().catch((error) => logger?.warn({ err: error?.message }, 'Battery tracker initial check failed'));
   }
 
   function stop() {

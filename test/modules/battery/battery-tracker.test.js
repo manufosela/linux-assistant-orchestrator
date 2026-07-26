@@ -229,6 +229,20 @@ describe('createBatteryTracker.checkOnce', () => {
     assert.equal(notifier.sent.length, 1);
   });
 
+  it('start() dispara una comprobación inicial (fija la línea base sin esperar al intervalo)', async () => {
+    const cache = buildFakeStateCache([battery('sensor.a_battery', 45, 'Despacho')]);
+    const notifier = buildFakeNotifier();
+    const store = buildMemoryStore();
+    const tracker = makeTracker({ cache, notifier, store });
+
+    tracker.start();
+    await new Promise((resolve) => setImmediate(resolve)); // deja completar el checkOnce inicial
+    tracker.stop();
+
+    assert.equal(store.getLastLevel('sensor.a_battery'), 45);
+    assert.equal(notifier.sent.length, 0);
+  });
+
   it('ignora baterías recargables excluidas (móvil que se carga a diario)', async () => {
     const cache = buildFakeStateCache([battery('sensor.pixel_7_pro_battery_level', 40, 'Pixel 7 Pro Battery level')]);
     const notifier = buildFakeNotifier();
