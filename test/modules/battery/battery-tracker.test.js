@@ -229,14 +229,28 @@ describe('createBatteryTracker.checkOnce', () => {
     assert.equal(notifier.sent.length, 1);
   });
 
-  it('start() dispara una comprobación inicial (fija la línea base sin esperar al intervalo)', async () => {
+  it('start() programa una comprobación inicial con retardo (fija la línea base sin esperar al intervalo)', async () => {
     const cache = buildFakeStateCache([battery('sensor.a_battery', 45, 'Despacho')]);
     const notifier = buildFakeNotifier();
     const store = buildMemoryStore();
-    const tracker = makeTracker({ cache, notifier, store });
+    // scheduler cuyo delay ejecuta el task de inmediato (simula que ya pasó el retardo)
+    const delayTasks = [];
+    const scheduler = {
+      schedule() { return { stop() {} }; },
+      delay(task) { delayTasks.push(task); return { cancel() {} }; },
+      stopAll() {},
+    };
+    const tracker = createBatteryTracker({
+      logger: noopLogger,
+      scheduler,
+      notificationService: notifier.service,
+      stateCache: cache,
+      store,
+    });
 
     tracker.start();
-    await new Promise((resolve) => setImmediate(resolve)); // deja completar el checkOnce inicial
+    assert.equal(delayTasks.length, 1); // se programó el check inicial
+    await delayTasks[0]();
     tracker.stop();
 
     assert.equal(store.getLastLevel('sensor.a_battery'), 45);

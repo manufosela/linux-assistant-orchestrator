@@ -139,6 +139,7 @@ export function createBatteryTracker({
   stateCache,
   store,
   checkIntervalMs = DEFAULT_CHECK_INTERVAL_MS,
+  initialDelayMs = 45 * 1000,
   jumpMin = DEFAULT_JUMP_MIN,
   prevMax = DEFAULT_PREV_MAX,
   excludePattern = '',
@@ -155,6 +156,7 @@ export function createBatteryTracker({
     !!excludeRe && (excludeRe.test(entity.entity_id) || excludeRe.test(entity.friendly_name || ''));
 
   let job = null;
+  let initialCheck = null;
   let loaded = false;
   let seedImported = false;
 
@@ -259,14 +261,20 @@ export function createBatteryTracker({
     if (job) return;
     job = scheduler.schedule(checkOnce, checkIntervalMs, 'battery-tracker');
     logger?.info({ intervalMs: checkIntervalMs }, 'Battery tracker started');
-    // Comprobación inicial inmediata: fija la línea base e importa el seed sin
-    // esperar al primer intervalo (evita perder un cambio hecho en la 1ª hora).
-    checkOnce().catch((error) => logger?.warn({ err: error?.message }, 'Battery tracker initial check failed'));
+    // Comprobación inicial con un pequeño retardo: fija la línea base e importa
+    // el seed sin esperar al primer intervalo (1h), pero dando tiempo a que el
+    // state cache de HA complete su carga async (arranca vacío).
+    initialCheck = scheduler.delay(
+      () => checkOnce().catch((error) => logger?.warn({ err: error?.message }, 'Battery tracker initial check failed')),
+      initialDelayMs,
+    );
   }
 
   function stop() {
     job?.stop();
     job = null;
+    initialCheck?.cancel?.();
+    initialCheck = null;
   }
 
   return { start, stop, checkOnce };
