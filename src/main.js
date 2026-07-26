@@ -539,6 +539,7 @@ async function main() {
       checkIntervalMs: config.battery.checkIntervalMs,
       jumpMin: config.battery.jumpMin,
       prevMax: config.battery.prevMax,
+      excludePattern: config.battery.excludePattern,
       seedCsvPath: config.battery.seedCsvPath,
     });
     batteryTracker.start();

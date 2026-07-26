@@ -85,6 +85,8 @@ services:
       BATTERY_WATCHER_ENABLED: ${BATTERY_WATCHER_ENABLED:-false}
       BATTERY_HISTORY_PATH: ${BATTERY_HISTORY_PATH:-/data/config/battery-history.json}
       BATTERY_SEED_CSV: ${BATTERY_SEED_CSV:-}
+      # Excluye recargables (móviles/tablets) que falsearían un cambio de pila.
+      BATTERY_EXCLUDE_PATTERN: ${BATTERY_EXCLUDE_PATTERN:-}
 
       # --- Prometheus down-check (optional; on-demand "is anything down?") ---
       # Opt-in: set PROMETHEUS_ENABLED=true and PROMETHEUS_BASE_URL to your

@@ -63,7 +63,7 @@ const battery = (id, state, name) => ({
   unit: '%',
 });
 
-function makeTracker({ cache, notifier, store, nowFn, seedCsvPath = '' }) {
+function makeTracker({ cache, notifier, store, nowFn, seedCsvPath = '', excludePattern = '' }) {
   return createBatteryTracker({
     logger: noopLogger,
     scheduler: buildFakeScheduler(),
@@ -71,6 +71,7 @@ function makeTracker({ cache, notifier, store, nowFn, seedCsvPath = '' }) {
     stateCache: cache,
     store,
     seedCsvPath,
+    excludePattern,
     nowFn,
   });
 }
@@ -226,6 +227,19 @@ describe('createBatteryTracker.checkOnce', () => {
     cache.setEntities([battery('sensor.a_battery', 100, 'Despacho')]);
     await tracker.checkOnce();
     assert.equal(notifier.sent.length, 1);
+  });
+
+  it('ignora baterías recargables excluidas (móvil que se carga a diario)', async () => {
+    const cache = buildFakeStateCache([battery('sensor.pixel_7_pro_battery_level', 40, 'Pixel 7 Pro Battery level')]);
+    const notifier = buildFakeNotifier();
+    const store = buildMemoryStore({ levels: { 'sensor.pixel_7_pro_battery_level': 40 }, history: {} });
+    const tracker = makeTracker({ cache, notifier, store, excludePattern: 'phone|pixel|tablet' });
+
+    // el móvil se carga: 40 → 95. Sin exclusión sería un "cambio de pila"; con ella, nada.
+    cache.setEntities([battery('sensor.pixel_7_pro_battery_level', 95, 'Pixel 7 Pro Battery level')]);
+    await tracker.checkOnce();
+
+    assert.equal(notifier.sent.length, 0);
   });
 
   it('no repite el aviso si el nivel se mantiene alto tras el cambio', async () => {

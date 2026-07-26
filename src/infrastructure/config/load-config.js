@@ -322,6 +322,11 @@ export function loadConfig(envPath = '.env') {
       // Umbrales del salto: nivel nuevo ≥ jumpMin Y nivel anterior < prevMax.
       jumpMin: Number(process.env.BATTERY_JUMP_MIN ?? 90),
       prevMax: Number(process.env.BATTERY_PREV_MAX ?? 50),
+      // Excluye baterías RECARGABLES (móviles, tablets, portátiles): se cargan a
+      // diario y falsearían un "cambio de pila". Solo pilas reemplazables.
+      excludePattern:
+        process.env.BATTERY_EXCLUDE_PATTERN ??
+        'phone|pixel|iphone|ipad|tablet|watch|m[oó]vil|movil|portat|laptop|macbook',
       historyPath:
         process.env.BATTERY_HISTORY_PATH ?? join(homedir(), '.config', 'luis', 'battery-history.json'),
       // CSV semilla opcional con los cambios ya hechos a mano (para calcular
@@ -395,6 +400,6 @@ function validateConfig(config) {
  * @property {{ search: { baseUrl: string, apiKey: string }, urlFetch: { allowPrivateNetworks: boolean, privateAllowlist: string[] } }} webTools
  * @property {{ baseUrl: string, token: string, language: string, agentId: string }} homeAssistant
  * @property {{ enabled: boolean, checkIntervalMs: number, summerMonths: number[], winterMonths: number[], summerMeanThreshold: number, summerRoomThreshold: number, winterMeanThreshold: number, winterRoomThreshold: number, summerRecoveryMean: number, winterRecoveryMean: number, reAlertMs: number, excludePattern: string, requireArea: boolean, outdoorEntity: string, quietWindowStart: string, quietWindowEnd: string, alexaEnabled: boolean, alexaTarget: string, alexaQuietStart: string, alexaQuietEnd: string }} temperature
- * @property {{ enabled: boolean, checkIntervalMs: number, jumpMin: number, prevMax: number, historyPath: string, seedCsvPath: string }} battery
+ * @property {{ enabled: boolean, checkIntervalMs: number, jumpMin: number, prevMax: number, excludePattern: string, historyPath: string, seedCsvPath: string }} battery
  * @property {{ credentialsPath: string, tokensPath: string }} google
  */

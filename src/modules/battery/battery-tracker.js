@@ -141,11 +141,18 @@ export function createBatteryTracker({
   checkIntervalMs = DEFAULT_CHECK_INTERVAL_MS,
   jumpMin = DEFAULT_JUMP_MIN,
   prevMax = DEFAULT_PREV_MAX,
+  excludePattern = '',
   seedCsvPath = '',
   nowFn = () => new Date(),
 }) {
   if (!stateCache) throw new Error('createBatteryTracker requires stateCache');
   if (!store) throw new Error('createBatteryTracker requires store');
+
+  // Excluye dispositivos con batería RECARGABLE (móviles, tablets…): se cargan
+  // a diario de <50% a ~100% y dispararían un falso "cambio de pila" cada día.
+  const excludeRe = excludePattern ? new RegExp(excludePattern, 'i') : null;
+  const isExcluded = (entity) =>
+    !!excludeRe && (excludeRe.test(entity.entity_id) || excludeRe.test(entity.friendly_name || ''));
 
   let job = null;
   let loaded = false;
@@ -160,7 +167,9 @@ export function createBatteryTracker({
   }
 
   function listBatteryEntities() {
-    return stateCache.findEntities({ deviceClass: 'battery' }).filter((e) => isFiniteLevel(e.state));
+    return stateCache
+      .findEntities({ deviceClass: 'battery' })
+      .filter((e) => isFiniteLevel(e.state) && !isExcluded(e));
   }
 
   /** Importa el CSV semilla en el historial (solo una vez, si el store no tiene aún historial). */
