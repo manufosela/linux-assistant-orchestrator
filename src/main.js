@@ -34,6 +34,8 @@ import { createClusterStatusService } from './modules/cluster/cluster-status-ser
 import { createClusterWatcher } from './modules/cluster/cluster-watcher.js';
 import { createClusterStateStore } from './modules/cluster/cluster-state-store.js';
 import { createTemperatureWatcher } from './modules/temperature/temperature-watcher.js';
+import { createBatteryTracker } from './modules/battery/battery-tracker.js';
+import { createBatteryHistoryStore } from './modules/battery/battery-history-store.js';
 import { createPrometheusClient } from './modules/prometheus/prometheus-client.js';
 import { createGoogleAuth } from './modules/google/google-auth.js';
 import { createGmailClient } from './modules/email/gmail-client.js';
@@ -140,6 +142,7 @@ async function main() {
     { name: 'cluster', status: config.cluster.enabled ? 'enabled' : 'disabled' },
     { name: 'prometheus', status: config.prometheus.enabled ? 'enabled' : 'disabled' },
     { name: 'temperature', status: config.temperature.enabled ? 'enabled' : 'disabled' },
+    { name: 'battery', status: config.battery.enabled ? 'enabled' : 'disabled' },
   ];
 
   const statusService = createAssistantStatusService({
@@ -518,6 +521,34 @@ async function main() {
     logger.info('Temperature watcher disabled (set TEMP_WATCHER_ENABLED=true to enable)');
   }
 
+  // Battery tracker (LUI-TSK-0083) — detecta el cambio de pila de los sensores
+  // Zigbee (device_class=battery) por el salto de nivel al reponerla y avisa por
+  // Telegram con la duración de la anterior.
+  let batteryTracker = null;
+  if (config.battery.enabled && homeAssistantStateCache) {
+    const batteryStore = createBatteryHistoryStore({
+      filePath: config.battery.historyPath,
+      logger,
+    });
+    batteryTracker = createBatteryTracker({
+      logger,
+      scheduler,
+      notificationService,
+      stateCache: homeAssistantStateCache,
+      store: batteryStore,
+      checkIntervalMs: config.battery.checkIntervalMs,
+      jumpMin: config.battery.jumpMin,
+      prevMax: config.battery.prevMax,
+      excludePattern: config.battery.excludePattern,
+      seedCsvPath: config.battery.seedCsvPath,
+    });
+    batteryTracker.start();
+  } else if (config.battery.enabled) {
+    logger.warn('Battery tracker enabled but Home Assistant is not available — skipped');
+  } else {
+    logger.info('Battery tracker disabled (set BATTERY_WATCHER_ENABLED=true to enable)');
+  }
+
   // Gmail digest diario (LUI-TSK-0031 / LUI-TSK-0064). Off por defecto:
   // requiere gmailDigest, notificación y GMAIL_DIGEST_ENABLED=true.
   //
@@ -622,6 +653,7 @@ async function main() {
     scheduler.stopAll();
     clusterWatcher?.stop();
     temperatureWatcher?.stop();
+    batteryTracker?.stop();
     await downloadWatcher.stop();
     await telegramStop();
     await webStop();
