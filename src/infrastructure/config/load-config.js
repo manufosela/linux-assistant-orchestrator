@@ -288,7 +288,7 @@ export function loadConfig(envPath = '.env') {
       summerRecoveryMean: Number(process.env.TEMP_SUMMER_RECOVERY_MEAN ?? 25.0),
       winterRecoveryMean: Number(process.env.TEMP_WINTER_RECOVERY_MEAN ?? 22.0),
       // Re-aviso si la alerta persiste (ms). Default 3 h.
-      reAlertMs: Number(process.env.TEMP_REALERT_MS ?? 3 * 60 * 60 * 1000),
+      reAlertRiseDelta: Number(process.env.TEMP_REALERT_RISE_DELTA ?? 2.0),
       // Regex (case-insensitive) para excluir sensores no interiores de la media
       // y la vigilancia (exterior, nevera, dispositivos…). Vacío = ninguno.
       excludePattern: process.env.TEMP_EXCLUDE_PATTERN
@@ -399,7 +399,7 @@ function validateConfig(config) {
  * @property {{ enabled: boolean, host: string, port: number }} web
  * @property {{ search: { baseUrl: string, apiKey: string }, urlFetch: { allowPrivateNetworks: boolean, privateAllowlist: string[] } }} webTools
  * @property {{ baseUrl: string, token: string, language: string, agentId: string }} homeAssistant
- * @property {{ enabled: boolean, checkIntervalMs: number, summerMonths: number[], winterMonths: number[], summerMeanThreshold: number, summerRoomThreshold: number, winterMeanThreshold: number, winterRoomThreshold: number, summerRecoveryMean: number, winterRecoveryMean: number, reAlertMs: number, excludePattern: string, requireArea: boolean, outdoorEntity: string, quietWindowStart: string, quietWindowEnd: string, alexaEnabled: boolean, alexaTarget: string, alexaQuietStart: string, alexaQuietEnd: string }} temperature
+ * @property {{ enabled: boolean, checkIntervalMs: number, summerMonths: number[], winterMonths: number[], summerMeanThreshold: number, summerRoomThreshold: number, winterMeanThreshold: number, winterRoomThreshold: number, summerRecoveryMean: number, winterRecoveryMean: number, reAlertRiseDelta: number, excludePattern: string, requireArea: boolean, outdoorEntity: string, quietWindowStart: string, quietWindowEnd: string, alexaEnabled: boolean, alexaTarget: string, alexaQuietStart: string, alexaQuietEnd: string }} temperature
  * @property {{ enabled: boolean, checkIntervalMs: number, jumpMin: number, prevMax: number, excludePattern: string, historyPath: string, seedCsvPath: string }} battery
  * @property {{ credentialsPath: string, tokensPath: string }} google
  */

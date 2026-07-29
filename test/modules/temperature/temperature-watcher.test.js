@@ -152,6 +152,47 @@ describe('createTemperatureWatcher — anti-spam y recuperación', () => {
     assert.equal(notifier.sent.length, 1, 'solo un aviso pese a 3 ticks en alerta');
   });
 
+  it('re-avisa SOLO si la temperatura sigue subiendo ≥ delta (LUI-TSK-0084)', async () => {
+    // un solo sensor = la media es su valor; delta por defecto 2.0
+    const cache = buildFakeStateCache({ entities: [temp('sensor.cocina', 30, 'Cocina')] });
+    const notifier = buildFakeNotifier();
+    const w = makeWatcher(cache, notifier);
+    await w.checkOnce();
+    assert.equal(notifier.sent.length, 1, 'aviso inicial a 30');
+
+    // sube a 31 (+1, < 2): NO re-avisa
+    cache.setEntities([temp('sensor.cocina', 31, 'Cocina')]);
+    await w.checkOnce();
+    assert.equal(notifier.sent.length, 1, 'a 31 (+1) no re-avisa');
+
+    // sube a 32.5 (+2.5 sobre el último avisado 30, ≥ 2): re-avisa "sigue subiendo"
+    cache.setEntities([temp('sensor.cocina', 32.5, 'Cocina')]);
+    await w.checkOnce();
+    assert.equal(notifier.sent.length, 2, 'a 32.5 (+2.5) re-avisa');
+    assert.match(notifier.sent[1].text, /Sigue subiendo/);
+
+    // se mantiene a 32.5: NO re-avisa (ya no sube respecto al último aviso)
+    await w.checkOnce();
+    assert.equal(notifier.sent.length, 2, 'mantenida a 32.5 no re-avisa');
+  });
+
+  it('en invierno re-avisa solo si sigue BAJANDO ≥ delta', async () => {
+    const cache = buildFakeStateCache({ entities: [temp('sensor.cocina', 20, 'Cocina')] });
+    const notifier = buildFakeNotifier();
+    const w = makeWatcher(cache, notifier, { now: WINTER_NOON });
+    await w.checkOnce();
+    assert.equal(notifier.sent.length, 1, 'aviso inicial de frío a 20');
+    // baja a 19.5 (-0.5 < 2): no re-avisa
+    cache.setEntities([temp('sensor.cocina', 19.5, 'Cocina')]);
+    await w.checkOnce();
+    assert.equal(notifier.sent.length, 1);
+    // baja a 17.5 (-2.5 ≥ 2): re-avisa "sigue bajando"
+    cache.setEntities([temp('sensor.cocina', 17.5, 'Cocina')]);
+    await w.checkOnce();
+    assert.equal(notifier.sent.length, 2);
+    assert.match(notifier.sent[1].text, /Sigue bajando/);
+  });
+
   it('histéresis: no recupera al bajar de 30, solo al llegar a 25; sin "normalizada"', async () => {
     const cache = buildFakeStateCache({ entities: [temp('sensor.cocina', 31.5, 'Cocina')] });
     const notifier = buildFakeNotifier();
