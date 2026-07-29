@@ -17,8 +17,9 @@ el cluster watcher.
   esto descarta duplicados y dispositivos con valores basura (p.ej. 0.0).
 - **Por habitación**: se agrupa por `area_name`; la temperatura de la habitación
   es la media de sus sensores.
-- **Anti-spam**: un único aviso al entrar en alerta; re-aviso sólo cada
-  `TEMP_REALERT_MS` mientras persista.
+- **Anti-spam**: un único aviso al entrar en alerta; **re-aviso sólo si la
+  temperatura empeora** `TEMP_REALERT_RISE_DELTA` ºC sobre el último valor
+  avisado (p.ej. 30→32). Ya NO se re-avisa por tiempo transcurrido (LUI-TSK-0084).
 - **Histéresis**: tras una alerta, la vuelta al rango NO se declara al cruzar de
   vuelta el umbral de alerta, sino al alcanzar el umbral de recuperación
   (`TEMP_SUMMER_RECOVERY_MEAN`=25 en verano, `TEMP_WINTER_RECOVERY_MEAN`=22 en
@@ -60,7 +61,7 @@ Temperatura Cocina: 31.3º | Temperatura media: 29.7º
 | `TEMP_WINTER_ROOM_MIN` | `20.1` | Umbral por habitación en invierno |
 | `TEMP_SUMMER_RECOVERY_MEAN` | `25.0` | Histéresis verano: media a la que se avisa la bajada |
 | `TEMP_WINTER_RECOVERY_MEAN` | `22.0` | Histéresis invierno: media a la que se avisa la subida |
-| `TEMP_REALERT_MS` | `10800000` (3 h) | Re-aviso mientras persista la alerta |
+| `TEMP_REALERT_RISE_DELTA` | `2.0` | Re-aviso sólo si la temperatura empeora estos ºC sobre el último aviso |
 | `TEMP_ALEXA_ENABLED` | `false` | Anunciar también por voz en Alexa (vía HA) |
 | `TEMP_ALEXA_TARGET` | (vacío) | Echo destino (alias); vacío = toda la casa |
 | `TEMP_ALEXA_QUIET_START` | `22:00` | Inicio de la franja sin voz (Telegram sí) |

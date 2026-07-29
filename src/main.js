@@ -501,7 +501,7 @@ async function main() {
       summerRoomThreshold: config.temperature.summerRoomThreshold,
       winterMeanThreshold: config.temperature.winterMeanThreshold,
       winterRoomThreshold: config.temperature.winterRoomThreshold,
-      reAlertMs: config.temperature.reAlertMs,
+      reAlertRiseDelta: config.temperature.reAlertRiseDelta,
       excludePattern: config.temperature.excludePattern,
       requireArea: config.temperature.requireArea,
       outdoorEntity: config.temperature.outdoorEntity,

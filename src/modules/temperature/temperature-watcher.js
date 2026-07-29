@@ -10,7 +10,9 @@
  *
  * Comportamiento (calcado del patrón de cluster-watcher):
  *  - Estado de alerta global en memoria; no repite el aviso mientras la alerta
- *    siga activa (anti-spam), con re-aviso opcional cada `reAlertMs`.
+ *    siga activa (anti-spam). Sólo re-avisa si la temperatura EMPEORA
+ *    `reAlertRiseDelta` ºC sobre el último valor avisado (LUI-TSK-0084); ya no
+ *    se re-avisa por tiempo transcurrido.
  *  - Al normalizarse la temperatura, avisa de la recuperación.
  *  - Franja silenciosa nocturna (quiet hours): dentro de la franja detecta pero
  *    no avisa; al salir, si la alerta persiste, avisa.
@@ -31,7 +33,7 @@
  *   summerRoomThreshold?: number,
  *   winterMeanThreshold?: number,
  *   winterRoomThreshold?: number,
- *   reAlertMs?: number,
+ *   reAlertRiseDelta?: number,
  *   excludePattern?: string,
  *   quietWindowStart?: string,
  *   quietWindowEnd?: string,
@@ -61,7 +63,9 @@ export function createTemperatureWatcher({
   // umbral de alerta, sino al alcanzar este umbral de recuperación.
   summerRecoveryMean = 25.0,
   winterRecoveryMean = 22.0,
-  reAlertMs = 3 * 60 * 60 * 1000,
+  // Re-aviso SOLO si la temperatura EMPEORA este delta (ºC) sobre el último valor
+  // avisado; ya NO se re-avisa por tiempo transcurrido (LUI-TSK-0084).
+  reAlertRiseDelta = 2.0,
   excludePattern = '',
   requireArea = true,
   outdoorEntity = '',
@@ -86,7 +90,7 @@ export function createTemperatureWatcher({
   }
 
   /** @type {AlertState} */
-  let alert = { active: false, kind: null, since: 0, notifiedAt: 0 };
+  let alert = { active: false, kind: null, since: 0, notifiedAt: 0, lastMean: null };
   /** @type {{ stop: () => void } | null} */
   let job = null;
 
@@ -221,11 +225,11 @@ export function createTemperatureWatcher({
    * @param {{ reminder?: boolean, outdoorTemp?: number|null, humidityMean?: number|null }} [opts]
    * @returns {string}
    */
-  function buildAlertMessage(ev, { reminder = false, outdoorTemp = null, humidityMean = null } = {}) {
+  function buildAlertMessage(ev, { rising = false, outdoorTemp = null, humidityMean = null } = {}) {
     const head = ev.kind === 'calor'
-      ? (reminder ? '🌡️ Sigue haciendo calor en casa' : '🌡️ Hace calor en casa')
-      : (reminder ? '🥶 Sigue haciendo frío en casa' : '🥶 Hace frío en casa');
-    const since = reminder ? ` (desde hace ${formatDuration(nowFn().getTime() - alert.since)})` : '';
+      ? (rising ? '🌡️ Sigue subiendo: más calor en casa' : '🌡️ Hace calor en casa')
+      : (rising ? '🥶 Sigue bajando: más frío en casa' : '🥶 Hace frío en casa');
+    const since = rising ? ` (desde hace ${formatDuration(nowFn().getTime() - alert.since)})` : '';
     return `${head}${since}\nTemperatura ${ev.room}: ${fmt1(ev.roomTemp)}º | Temperatura media: ${fmt1(ev.mean)}º`
       + buildExtraLine({ outdoorTemp, humidityMean });
   }
@@ -252,15 +256,15 @@ export function createTemperatureWatcher({
    * @param {{ reminder?: boolean }} [opts]
    * @returns {string}
    */
-  function buildVoiceMessage(ev, { reminder = false, drop = false } = {}) {
+  function buildVoiceMessage(ev, { rising = false, drop = false } = {}) {
     if (drop) {
       return ev.kind === 'calor'
         ? `La temperatura ha bajado a ${Math.round(ev.mean)} grados.`
         : `La temperatura ha subido a ${Math.round(ev.mean)} grados.`;
     }
     const cond = ev.kind === 'calor'
-      ? (reminder ? 'Sigue haciendo calor en casa' : 'Atención, hace calor en casa')
-      : (reminder ? 'Sigue haciendo frío en casa' : 'Atención, hace frío en casa');
+      ? (rising ? 'Sigue subiendo el calor en casa' : 'Atención, hace calor en casa')
+      : (rising ? 'Sigue bajando la temperatura en casa' : 'Atención, hace frío en casa');
     return `${cond}. Temperatura en ${ev.room}, ${Math.round(ev.roomTemp)} grados. `
       + `Media de la casa, ${Math.round(ev.mean)} grados.`;
   }
@@ -327,7 +331,7 @@ export function createTemperatureWatcher({
     if (!alert.active) {
       // Entrar en alerta al superar el umbral de alerta.
       if (ev.isAlert) {
-        alert = { active: true, kind: ev.kind, since: now, notifiedAt: 0 };
+        alert = { active: true, kind: ev.kind, since: now, notifiedAt: 0, lastMean: null };
         if (inQuiet) {
           logger.info({ kind: ev.kind }, 'Temperature alert durante franja silenciosa — notificación suprimida');
         } else {
@@ -335,6 +339,7 @@ export function createTemperatureWatcher({
           await notify(buildAlertMessage(ev, ctx), 'warn');
           await announceVoice(ev);
           alert.notifiedAt = now;
+          alert.lastMean = ev.mean;
         }
       }
       return;
@@ -344,7 +349,7 @@ export function createTemperatureWatcher({
     // el umbral de recuperación (p.ej. media <= 25 en verano), no al cruzar de
     // vuelta el umbral de alerta. Es el aviso útil (p.ej. apagar el aire).
     if (ev.isRecovered) {
-      alert = { active: false, kind: null, since: 0, notifiedAt: 0 };
+      alert = { active: false, kind: null, since: 0, notifiedAt: 0, lastMean: null };
       if (inQuiet) {
         logger.info({ mean: ev.mean }, 'Temperature: vuelta al rango durante franja silenciosa (sin aviso)');
       } else {
@@ -358,16 +363,21 @@ export function createTemperatureWatcher({
     // Sigue en alerta (entre el umbral de recuperación y el de alerta).
     if (inQuiet) return;
     if (alert.notifiedAt === 0) {
-      // La alerta se abrió durante la franja silenciosa; ahora fuera, avisar.
+      // La alerta se abrió durante la franja silenciosa; ahora fuera, primer aviso.
       await notify(buildAlertMessage(ev, ctx), 'warn');
       await announceVoice(ev);
       alert.notifiedAt = now;
-    } else if (now - alert.notifiedAt >= reAlertMs) {
-      await notify(buildAlertMessage(ev, { reminder: true, ...ctx }), 'warn');
-      await announceVoice(ev, { reminder: true });
+      alert.lastMean = ev.mean;
+    } else if (isWorsening(ev, alert, reAlertRiseDelta)) {
+      // Re-aviso SOLO si EMPEORA (sube en calor / baja en frío) al menos
+      // `reAlertRiseDelta` sobre el último valor avisado. Ya no se re-avisa por
+      // tiempo transcurrido (LUI-TSK-0084).
+      await notify(buildAlertMessage(ev, { rising: true, ...ctx }), 'warn');
+      await announceVoice(ev, { rising: true });
       alert.notifiedAt = now;
+      alert.lastMean = ev.mean;
     } else {
-      logger.debug('Temperature alert sigue activa (anti-spam, sin re-aviso)');
+      logger.debug('Temperature alert activa (sin re-aviso: no empeora respecto al último aviso)');
     }
   }
 
@@ -396,6 +406,22 @@ function isFiniteNumber(value) {
 }
 
 /**
+ * ¿La alerta ha EMPEORADO respecto al último valor avisado? Para calor, la media
+ * sube ≥ delta; para frío, baja ≥ delta. Si aún no hay valor avisado, no.
+ *
+ * @param {{ kind: 'calor'|'frio', mean: number }} ev
+ * @param {{ lastMean: number|null }} alert
+ * @param {number} delta
+ * @returns {boolean}
+ */
+function isWorsening(ev, alert, delta) {
+  if (alert.lastMean == null) return false;
+  return ev.kind === 'calor'
+    ? ev.mean >= alert.lastMean + delta
+    : ev.mean <= alert.lastMean - delta;
+}
+
+/**
  * @param {number} n
  * @returns {string}
  */
@@ -409,6 +435,7 @@ function fmt1(n) {
  * @property {'calor'|'frio'|null} kind
  * @property {number} since - epoch ms del inicio de la alerta actual
  * @property {number} notifiedAt - epoch ms del último aviso enviado (0 = no notificado)
+ * @property {number|null} lastMean - media avisada en el último aviso (re-aviso solo si empeora este valor)
  */
 
 /**
