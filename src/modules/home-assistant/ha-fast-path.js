@@ -35,14 +35,17 @@ export async function tryFastPath({ text, stateCache, haClient, logger, houseAve
     return handleAreaList(stateCache);
   }
 
-  const houseAvg = matchesHouseAverage(lower);
-  if (houseAvg) {
-    return handleHouseAverage(stateCache, houseAvg.deviceClass, houseAverageFilter);
-  }
-
-  const sensorByArea = matchesSensorByArea(lower);
-  if (sensorByArea) {
-    return handleSensorByArea(stateCache, sensorByArea.deviceClass, sensorByArea.area, logger);
+  // Temperatura/humedad por INTENCIÓN, no por frase exacta (LUI-TSK-0085): se
+  // detecta el tipo por sinónimos (temperatura/calor/frío/grados/clima, humedad)
+  // y se decide por área concreta o media de la casa según se nombre o no un
+  // sitio. Así el usuario pregunta como quiera sin memorizar frases.
+  const deviceClass = matchTempHumidity(lower);
+  if (deviceClass) {
+    const area = extractAreaPhrase(lower);
+    if (area) {
+      return handleSensorByArea(stateCache, deviceClass, area, logger);
+    }
+    return handleHouseAverage(stateCache, deviceClass, houseAverageFilter);
   }
 
   const onOff = matchesOnOff(lower);
@@ -81,19 +84,37 @@ function handleAreaList(stateCache) {
 }
 
 /**
- * Detects "qué temperatura/humedad media hace en casa", "...en toda la casa", "promedio".
+ * Detecta el tipo de sensor (temperatura/humedad) por INTENCIÓN, tolerante a
+ * sinónimos y redacción libre: "temperatura", "calor", "frío", "grados",
+ * "clima", "termómetro" → temperatura; "humedad", "húmedo" → humedad. Así el
+ * usuario no depende de una frase concreta.
+ *
+ * @param {string} lower  texto en minúsculas y sin signos
+ * @returns {'temperature' | 'humidity' | null}
+ */
+function matchTempHumidity(lower) {
+  if (/\b(?:temperatura|termometr|term[oó]metr|grados?|calor|fr[ií]o|clima)\b/.test(lower)) return 'temperature';
+  if (/\b(?:humedad|h[uú]med[oa]?s?)\b/.test(lower)) return 'humidity';
+  return null;
+}
+
+/**
+ * Extrae el ÁREA de una pregunta de temperatura/humedad ("...en el despacho",
+ * "...del salón"). Devuelve null si no se nombra un sitio, o si el "sitio" es en
+ * realidad la casa entera (casa/hogar/general/dentro/interior) → en ese caso el
+ * llamador responde con la media de la casa.
  *
  * @param {string} lower
- * @returns {{ deviceClass: 'temperature' | 'humidity' } | null}
+ * @returns {string | null}
  */
-function matchesHouseAverage(lower) {
-  const isAverage = /(?:media|promedio|medi[ao])/.test(lower);
-  const isWholeHouse = /\b(?:en\s+(?:toda\s+)?(?:la\s+)?casa|en\s+todas?\s+(?:las|los)\s+(?:habitaciones|sitios|sitios)|globalmente|en\s+general)\b/.test(lower);
-  if (!isAverage && !isWholeHouse) return null;
-
-  if (/temperatura/.test(lower)) return { deviceClass: 'temperature' };
-  if (/humedad/.test(lower)) return { deviceClass: 'humidity' };
-  return null;
+function extractAreaPhrase(lower) {
+  const m = lower.match(/\b(?:en|del|de)\s+(.+?)\s*$/);
+  if (!m) return null;
+  const area = m[1].trim().replace(/^(?:el|la|los|las)\s+/, '').trim();
+  if (!area) return null;
+  if (/^(?:casa|hogar|general|interior|toda\s+la\s+casa)$/.test(area)) return null;
+  if (/^(?:dentro|adentro)$/.test(area)) return null;
+  return area;
 }
 
 /**
@@ -131,22 +152,6 @@ function handleHouseAverage(stateCache, deviceClass, houseAverageFilter) {
   };
 }
 
-/**
- * Detects "qué temperatura hace en el despacho", "qué humedad hay en la cocina", etc.
- * Returns the deviceClass + raw area string.
- *
- * @param {string} lower
- * @returns {{ deviceClass: 'temperature' | 'humidity', area: string } | null}
- */
-function matchesSensorByArea(lower) {
-  const re = /\b(?:qu[eé]|cu[aá]l(?:\s+es)?)?\s*(temperatura|humedad)\b[^?]*?\b(?:en|del?|de\s+la|de\s+los|de\s+las)\s+(.+?)\s*$/i;
-  const match = lower.match(re);
-  if (!match) return null;
-  const deviceClass = match[1] === 'temperatura' ? 'temperature' : 'humidity';
-  const area = match[2].trim();
-  if (!area) return null;
-  return { deviceClass, area };
-}
 
 /**
  * @param {import('./ha-state-cache.js').HomeAssistantStateCache} stateCache

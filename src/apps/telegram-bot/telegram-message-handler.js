@@ -1213,6 +1213,22 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       }
     }
 
+    // Home Assistant en lenguaje natural (LUI-TSK-0085): temperatura/humedad,
+    // encender/apagar, listar áreas… se resuelven desde el cache al instante,
+    // sin LLM ni el agente Ollama (que se cuelga). Si el fast path no lo
+    // reconoce, devuelve null y seguimos al LLM general como hasta ahora.
+    if (homeAssistant?.tryFastAnswer) {
+      try {
+        const haAnswer = await homeAssistant.tryFastAnswer(text);
+        if (haAnswer) {
+          await bot.sendMessage(chatId, `🏠 ${haAnswer}`);
+          return;
+        }
+      } catch (error) {
+        logger.warn({ chatId, err: error.message }, 'HA fast answer failed (NL)');
+      }
+    }
+
     const conversation = getConversation(chatId);
     conversation.appendUser(text);
 
