@@ -238,3 +238,52 @@ describe('home-assistant — media de casa con filtro (LUI-TSK-0081)', () => {
     assert.match(result.speech.toLowerCase(), /no tengo lecturas/);
   });
 });
+
+describe('home-assistant — detección por intención, sin frases exactas (LUI-TSK-0085)', () => {
+  /** @type {ReturnType<typeof makeCache>} */
+  let cache;
+  beforeEach(() => { cache = makeCache(FIXTURE); });
+
+  // Media de la casa (24.2) por CUALQUIER redacción, sin nombrar "media" ni "casa".
+  for (const frase of [
+    'qué calor hace',
+    'cuántos grados hay dentro',
+    'temperatura de la casa',
+    'hace calor?',
+    '¿cómo está la temperatura?',
+    'qué temperatura hace en casa',
+  ]) {
+    it(`"${frase}" → media de la casa`, async () => {
+      const result = await tryFastPath({ text: frase, stateCache: cache });
+      assert.equal(result?.handled, true, `no manejó: ${frase}`);
+      assert.match(result.speech, /media en casa/i);
+      assert.match(result.speech, /24\.2/);
+    });
+  }
+
+  // Sinónimos de temperatura pero nombrando un ÁREA → lectura de esa área.
+  it('"qué frío hace en la cocina" → temperatura de la cocina', async () => {
+    const result = await tryFastPath({ text: 'qué frío hace en la cocina', stateCache: cache });
+    assert.equal(result?.handled, true);
+    assert.match(result.speech, /Cocina/);
+    assert.match(result.speech, /23\.8/);
+  });
+
+  it('"temperatura del despacho" → temperatura del despacho', async () => {
+    const result = await tryFastPath({ text: 'temperatura del despacho', stateCache: cache });
+    assert.equal(result?.handled, true);
+    assert.match(result.speech, /Despacho/);
+    assert.match(result.speech, /24\.6/);
+  });
+
+  it('humedad por intención → media de humedad de la casa', async () => {
+    const result = await tryFastPath({ text: 'qué humedad hay', stateCache: cache });
+    assert.equal(result?.handled, true);
+    assert.match(result.speech.toLowerCase(), /humedad media en casa/);
+  });
+
+  it('lo que no es de HA NO lo toca (sigue al LLM)', async () => {
+    assert.equal(await tryFastPath({ text: 'cuéntame un chiste', stateCache: cache }), null);
+    assert.equal(await tryFastPath({ text: 'quién ganó el mundial de 2010', stateCache: cache }), null);
+  });
+});

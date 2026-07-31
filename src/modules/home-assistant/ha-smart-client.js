@@ -48,11 +48,31 @@ export function createSmartHomeAssistantClient({ haClient, stateCache, logger, h
   }
 
   /**
+   * Intenta responder SÓLO por el fast path (cache local), sin caer nunca al
+   * agente Ollama. Pensado para el lenguaje natural de Telegram: si la pregunta
+   * no es de HA (o el fast path no la reconoce), devuelve null y el llamador
+   * sigue su flujo (p.ej. el LLM general). (LUI-TSK-0085)
+   *
+   * @param {string} text
+   * @returns {Promise<string | null>} la respuesta hablada, o null si no aplica
+   */
+  async function tryFastAnswer(text) {
+    if (!stateCache || stateCache.areaCount === 0) return null;
+    try {
+      const fast = await tryFastPath({ text, stateCache, haClient, logger, houseAverageFilter });
+      return fast?.handled ? fast.speech : null;
+    } catch (error) {
+      logger?.warn({ err: error?.message }, 'HA fast answer failed');
+      return null;
+    }
+  }
+
+  /**
    * @returns {Promise<boolean>}
    */
   async function checkHealth() {
     return haClient.checkHealth();
   }
 
-  return { processConversation, checkHealth };
+  return { processConversation, checkHealth, tryFastAnswer };
 }
