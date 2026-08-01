@@ -333,6 +333,19 @@ export function loadConfig(envPath = '.env') {
       // duraciones desde ya). Vacío = arranca sin historial previo.
       seedCsvPath: process.env.BATTERY_SEED_CSV ?? '',
     },
+
+    // LUI-TSK-0086: estadísticas del lavavajillas (Miele en HA). Al terminar cada
+    // ciclo registra consumo (energía/agua) y avisa por Telegram con acumulados.
+    dishwasher: {
+      enabled: process.env.DISHWASHER_WATCHER_ENABLED === 'true',
+      checkIntervalMs: Number(process.env.DISHWASHER_CHECK_INTERVAL_MS ?? 2 * 60 * 1000),
+      historyPath:
+        process.env.DISHWASHER_HISTORY_PATH ?? join(homedir(), '.config', 'luis', 'dishwasher-history.json'),
+      stateEntity: process.env.DISHWASHER_STATE_ENTITY ?? 'sensor.lavavajillas',
+      energyEntity: process.env.DISHWASHER_ENERGY_ENTITY ?? 'sensor.lavavajillas_consumo_de_energia',
+      waterEntity: process.env.DISHWASHER_WATER_ENTITY ?? 'sensor.lavavajillas_consumo_de_agua',
+      programEntity: process.env.DISHWASHER_PROGRAM_ENTITY ?? 'sensor.lavavajillas_programa',
+    },
   };
 
   validateConfig(config);
@@ -378,6 +391,13 @@ function validateConfig(config) {
         'Set HA_BASE_URL and HA_TOKEN, or set BATTERY_WATCHER_ENABLED=false to disable it.',
     );
   }
+
+  if (config.dishwasher.enabled && (!config.homeAssistant.baseUrl || !config.homeAssistant.token)) {
+    throw new Error(
+      'Dishwasher stats is enabled (DISHWASHER_WATCHER_ENABLED=true) but Home Assistant is not configured. ' +
+        'Set HA_BASE_URL and HA_TOKEN, or set DISHWASHER_WATCHER_ENABLED=false to disable it.',
+    );
+  }
 }
 
 /**
@@ -401,5 +421,6 @@ function validateConfig(config) {
  * @property {{ baseUrl: string, token: string, language: string, agentId: string }} homeAssistant
  * @property {{ enabled: boolean, checkIntervalMs: number, summerMonths: number[], winterMonths: number[], summerMeanThreshold: number, summerRoomThreshold: number, winterMeanThreshold: number, winterRoomThreshold: number, summerRecoveryMean: number, winterRecoveryMean: number, reAlertRiseDelta: number, excludePattern: string, requireArea: boolean, outdoorEntity: string, quietWindowStart: string, quietWindowEnd: string, alexaEnabled: boolean, alexaTarget: string, alexaQuietStart: string, alexaQuietEnd: string }} temperature
  * @property {{ enabled: boolean, checkIntervalMs: number, jumpMin: number, prevMax: number, excludePattern: string, historyPath: string, seedCsvPath: string }} battery
+ * @property {{ enabled: boolean, checkIntervalMs: number, historyPath: string, stateEntity: string, energyEntity: string, waterEntity: string, programEntity: string }} dishwasher
  * @property {{ credentialsPath: string, tokensPath: string }} google
  */

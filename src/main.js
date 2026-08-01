@@ -36,6 +36,8 @@ import { createClusterStateStore } from './modules/cluster/cluster-state-store.j
 import { createTemperatureWatcher } from './modules/temperature/temperature-watcher.js';
 import { createBatteryTracker } from './modules/battery/battery-tracker.js';
 import { createBatteryHistoryStore } from './modules/battery/battery-history-store.js';
+import { createDishwasherWatcher } from './modules/dishwasher/dishwasher-watcher.js';
+import { createDishwasherHistoryStore } from './modules/dishwasher/dishwasher-history-store.js';
 import { createPrometheusClient } from './modules/prometheus/prometheus-client.js';
 import { createGoogleAuth } from './modules/google/google-auth.js';
 import { createGmailClient } from './modules/email/gmail-client.js';
@@ -143,6 +145,7 @@ async function main() {
     { name: 'prometheus', status: config.prometheus.enabled ? 'enabled' : 'disabled' },
     { name: 'temperature', status: config.temperature.enabled ? 'enabled' : 'disabled' },
     { name: 'battery', status: config.battery.enabled ? 'enabled' : 'disabled' },
+    { name: 'dishwasher', status: config.dishwasher.enabled ? 'enabled' : 'disabled' },
   ];
 
   const statusService = createAssistantStatusService({
@@ -549,6 +552,33 @@ async function main() {
     logger.info('Battery tracker disabled (set BATTERY_WATCHER_ENABLED=true to enable)');
   }
 
+  // Dishwasher stats (LUI-TSK-0086) — registra el consumo de cada lavado (Miele
+  // vía HA) y avisa por Telegram con acumulados hoy/semana/mes/año.
+  let dishwasherWatcher = null;
+  if (config.dishwasher.enabled && homeAssistantStateCache) {
+    const dishwasherStore = createDishwasherHistoryStore({
+      filePath: config.dishwasher.historyPath,
+      logger,
+    });
+    dishwasherWatcher = createDishwasherWatcher({
+      logger,
+      scheduler,
+      notificationService,
+      stateCache: homeAssistantStateCache,
+      store: dishwasherStore,
+      checkIntervalMs: config.dishwasher.checkIntervalMs,
+      stateEntity: config.dishwasher.stateEntity,
+      energyEntity: config.dishwasher.energyEntity,
+      waterEntity: config.dishwasher.waterEntity,
+      programEntity: config.dishwasher.programEntity,
+    });
+    dishwasherWatcher.start();
+  } else if (config.dishwasher.enabled) {
+    logger.warn('Dishwasher stats enabled but Home Assistant is not available — skipped');
+  } else {
+    logger.info('Dishwasher stats disabled (set DISHWASHER_WATCHER_ENABLED=true to enable)');
+  }
+
   // Gmail digest diario (LUI-TSK-0031 / LUI-TSK-0064). Off por defecto:
   // requiere gmailDigest, notificación y GMAIL_DIGEST_ENABLED=true.
   //
@@ -654,6 +684,7 @@ async function main() {
     clusterWatcher?.stop();
     temperatureWatcher?.stop();
     batteryTracker?.stop();
+    dishwasherWatcher?.stop();
     await downloadWatcher.stop();
     await telegramStop();
     await webStop();
