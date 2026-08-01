@@ -6,6 +6,7 @@ import {
   buildReport,
   prettyProgram,
   parseNumber,
+  isActiveState,
 } from '../../../src/modules/dishwasher/dishwasher-watcher.js';
 
 const noopLogger = { info() {}, warn() {}, error() {}, debug() {} };
@@ -67,6 +68,14 @@ describe('dishwasher — helpers puros', () => {
     assert.equal(prettyProgram('eco'), 'Eco');
     assert.equal(prettyProgram('quick_power_wash'), 'Quick power wash');
     assert.equal(prettyProgram('no_program'), '—');
+  });
+  it('isActiveState: hay ciclo → sondeo rápido; reposo → lento', () => {
+    for (const s of ['programmed', 'in_use', 'pause', 'rinse_hold', 'waiting_to_start', 'reserved']) {
+      assert.equal(isActiveState(s), true, `activo: ${s}`);
+    }
+    for (const s of ['off', 'idle', 'on', 'not_connected', 'program_ended', 'failure']) {
+      assert.equal(isActiveState(s), false, `reposo: ${s}`);
+    }
   });
   it('buildReport incluye consumo del ciclo y los 4 periodos', () => {
     const r = buildReport(

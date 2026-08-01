@@ -1,7 +1,15 @@
 import { summarise } from './dishwasher-history-store.js';
 
-const DEFAULT_CHECK_INTERVAL_MS = 2 * 60 * 1000; // 2 min: fino para pillar el fin de ciclo
+const DEFAULT_IDLE_INTERVAL_MS = 30 * 60 * 1000; // 30 min cuando no hay lavado
+const DEFAULT_ACTIVE_INTERVAL_MS = 2 * 60 * 1000; // 2 min con un ciclo en marcha
 const END_STATE = 'program_ended';
+// Estados en los que hay un ciclo en curso o programado → merece sondeo rápido.
+const ACTIVE_STATES = new Set(['programmed', 'in_use', 'pause', 'rinse_hold', 'waiting_to_start', 'reserved']);
+
+/** ¿El estado indica un ciclo en marcha/programado (→ sondeo rápido)? */
+export function isActiveState(state) {
+  return ACTIVE_STATES.has(state);
+}
 
 /** ¿Es un número válido (no 'unknown'/'unavailable')? */
 export function parseNumber(value) {
@@ -50,7 +58,8 @@ export function createDishwasherWatcher({
   notificationService,
   stateCache,
   store,
-  checkIntervalMs = DEFAULT_CHECK_INTERVAL_MS,
+  idleIntervalMs = DEFAULT_IDLE_INTERVAL_MS,
+  activeIntervalMs = DEFAULT_ACTIVE_INTERVAL_MS,
   stateEntity = 'sensor.lavavajillas',
   energyEntity = 'sensor.lavavajillas_consumo_de_energia',
   waterEntity = 'sensor.lavavajillas_consumo_de_agua',
@@ -60,8 +69,8 @@ export function createDishwasherWatcher({
   if (!stateCache) throw new Error('createDishwasherWatcher requires stateCache');
   if (!store) throw new Error('createDishwasherWatcher requires store');
 
-  let job = null;
-  let initialCheck = null;
+  let timer = null;
+  let running = false;
   let loaded = false;
   // Último valor válido observado durante el ciclo (los sensores se resetean).
   let lastEnergy = null;
@@ -129,23 +138,33 @@ export function createDishwasherWatcher({
     }
   }
 
+  /** Próximo intervalo según el estado guardado: rápido si hay ciclo, lento si no. */
+  function nextDelayMs() {
+    return isActiveState(store.getLastState()) ? activeIntervalMs : idleIntervalMs;
+  }
+
+  function scheduleNext(delayMs) {
+    timer = scheduler.delay(async () => {
+      if (!running) return;
+      await checkOnce().catch((error) => logger?.warn({ err: error?.message }, 'Dishwasher check failed'));
+      if (running) scheduleNext(nextDelayMs());
+    }, delayMs);
+  }
+
   function start() {
-    if (job) return;
-    job = scheduler.schedule(checkOnce, checkIntervalMs, 'dishwasher-watcher');
-    logger?.info({ intervalMs: checkIntervalMs }, 'Dishwasher watcher started');
-    // Fija la línea base (lastState) sin esperar al primer intervalo, dando
-    // tiempo a que el state cache de HA cargue (arranca vacío).
-    initialCheck = scheduler.delay(
-      () => checkOnce().catch((error) => logger?.warn({ err: error?.message }, 'Dishwasher initial check failed')),
-      45 * 1000,
-    );
+    if (running) return;
+    running = true;
+    logger?.info({ idleIntervalMs, activeIntervalMs }, 'Dishwasher watcher started (sondeo adaptativo)');
+    // Primera comprobación con retardo: fija la línea base y da tiempo al state
+    // cache de HA a cargar (arranca vacío). Después se auto-reprograma según el
+    // estado (2 min si hay ciclo, 30 min en reposo).
+    scheduleNext(45 * 1000);
   }
 
   function stop() {
-    job?.stop();
-    job = null;
-    initialCheck?.cancel?.();
-    initialCheck = null;
+    running = false;
+    timer?.cancel?.();
+    timer = null;
   }
 
   return { start, stop, checkOnce };
