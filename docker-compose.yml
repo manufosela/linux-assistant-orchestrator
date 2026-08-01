@@ -88,6 +88,11 @@ services:
       # Excluye recargables (móviles/tablets) que falsearían un cambio de pila.
       BATTERY_EXCLUDE_PATTERN: ${BATTERY_EXCLUDE_PATTERN:-}
 
+      # --- Dishwasher stats (LUI-TSK-0086) ---
+      # El historial DEBE vivir en /data/config para no perderse en cada deploy.
+      DISHWASHER_WATCHER_ENABLED: ${DISHWASHER_WATCHER_ENABLED:-false}
+      DISHWASHER_HISTORY_PATH: ${DISHWASHER_HISTORY_PATH:-/data/config/dishwasher-history.json}
+
       # --- Prometheus down-check (optional; on-demand "is anything down?") ---
       # Opt-in: set PROMETHEUS_ENABLED=true and PROMETHEUS_BASE_URL to your
       # Prometheus HTTP endpoint (e.g. http://<host>:9090).
