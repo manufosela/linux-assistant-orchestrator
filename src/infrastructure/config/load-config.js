@@ -348,6 +348,27 @@ export function loadConfig(envPath = '.env') {
       waterEntity: process.env.DISHWASHER_WATER_ENTITY ?? 'sensor.lavavajillas_consumo_de_agua',
       programEntity: process.env.DISHWASHER_PROGRAM_ENTITY ?? 'sensor.lavavajillas_programa',
     },
+
+    // Weather watcher (LUI-TSK-0088): sondea Open-Meteo (gratis, sin key) y avisa
+    // por Telegram + voz Alexa si se prevé lluvia/tormenta (para la ropa tendida).
+    // Las coordenadas NO se hardcodean (privacidad): van por WEATHER_LAT/WEATHER_LON.
+    weather: {
+      enabled: process.env.WEATHER_WATCHER_ENABLED === 'true',
+      latitude: process.env.WEATHER_LAT ? Number(process.env.WEATHER_LAT) : null,
+      longitude: process.env.WEATHER_LON ? Number(process.env.WEATHER_LON) : null,
+      checkIntervalMs: Number(process.env.WEATHER_CHECK_INTERVAL_MS ?? 30 * 60 * 1000),
+      lookaheadHours: Number(process.env.WEATHER_LOOKAHEAD_HOURS ?? 6),
+      probThreshold: Number(process.env.WEATHER_PROB_THRESHOLD ?? 50),
+      precipThreshold: Number(process.env.WEATHER_PRECIP_THRESHOLD ?? 0.3),
+      // Voz Alexa activada por defecto (el usuario la quiere); '' = toda la casa.
+      alexaEnabled: process.env.WEATHER_ALEXA_ENABLED !== 'false',
+      alexaTarget: process.env.WEATHER_ALEXA_TARGET ?? '',
+      // Franja en la que NO suena la voz (Telegram sí). Por defecto 22:00–08:00.
+      alexaQuietStart: process.env.WEATHER_ALEXA_QUIET_START ?? '22:00',
+      alexaQuietEnd: process.env.WEATHER_ALEXA_QUIET_END ?? '08:00',
+      historyPath:
+        process.env.WEATHER_HISTORY_PATH ?? join(homedir(), '.config', 'luis', 'weather-alert.json'),
+    },
   };
 
   validateConfig(config);
@@ -400,6 +421,13 @@ function validateConfig(config) {
         'Set HA_BASE_URL and HA_TOKEN, or set DISHWASHER_WATCHER_ENABLED=false to disable it.',
     );
   }
+
+  if (config.weather.enabled && (!Number.isFinite(config.weather.latitude) || !Number.isFinite(config.weather.longitude))) {
+    throw new Error(
+      'Weather watcher is enabled (WEATHER_WATCHER_ENABLED=true) but coordinates are missing. ' +
+        'Set WEATHER_LAT and WEATHER_LON (decimal degrees), or set WEATHER_WATCHER_ENABLED=false to disable it.',
+    );
+  }
 }
 
 /**
@@ -424,5 +452,6 @@ function validateConfig(config) {
  * @property {{ enabled: boolean, checkIntervalMs: number, summerMonths: number[], winterMonths: number[], summerMeanThreshold: number, summerRoomThreshold: number, winterMeanThreshold: number, winterRoomThreshold: number, summerRecoveryMean: number, winterRecoveryMean: number, reAlertRiseDelta: number, excludePattern: string, requireArea: boolean, outdoorEntity: string, quietWindowStart: string, quietWindowEnd: string, alexaEnabled: boolean, alexaTarget: string, alexaQuietStart: string, alexaQuietEnd: string }} temperature
  * @property {{ enabled: boolean, checkIntervalMs: number, jumpMin: number, prevMax: number, excludePattern: string, historyPath: string, seedCsvPath: string }} battery
  * @property {{ enabled: boolean, idleIntervalMs: number, activeIntervalMs: number, historyPath: string, stateEntity: string, energyEntity: string, waterEntity: string, programEntity: string }} dishwasher
+ * @property {{ enabled: boolean, latitude: number|null, longitude: number|null, checkIntervalMs: number, lookaheadHours: number, probThreshold: number, precipThreshold: number, alexaEnabled: boolean, alexaTarget: string, alexaQuietStart: string, alexaQuietEnd: string, historyPath: string }} weather
  * @property {{ credentialsPath: string, tokensPath: string }} google
  */
