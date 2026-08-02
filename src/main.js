@@ -38,6 +38,8 @@ import { createBatteryTracker } from './modules/battery/battery-tracker.js';
 import { createBatteryHistoryStore } from './modules/battery/battery-history-store.js';
 import { createDishwasherWatcher } from './modules/dishwasher/dishwasher-watcher.js';
 import { createDishwasherHistoryStore } from './modules/dishwasher/dishwasher-history-store.js';
+import { createWeatherWatcher } from './modules/weather/weather-watcher.js';
+import { createWeatherStore } from './modules/weather/weather-store.js';
 import { createPrometheusClient } from './modules/prometheus/prometheus-client.js';
 import { createGoogleAuth } from './modules/google/google-auth.js';
 import { createGmailClient } from './modules/email/gmail-client.js';
@@ -146,6 +148,7 @@ async function main() {
     { name: 'temperature', status: config.temperature.enabled ? 'enabled' : 'disabled' },
     { name: 'battery', status: config.battery.enabled ? 'enabled' : 'disabled' },
     { name: 'dishwasher', status: config.dishwasher.enabled ? 'enabled' : 'disabled' },
+    { name: 'weather', status: config.weather.enabled ? 'enabled' : 'disabled' },
   ];
 
   const statusService = createAssistantStatusService({
@@ -580,6 +583,33 @@ async function main() {
     logger.info('Dishwasher stats disabled (set DISHWASHER_WATCHER_ENABLED=true to enable)');
   }
 
+  // Weather watcher (LUI-TSK-0088) — avisa de lluvia/tormenta (Open-Meteo) por
+  // Telegram + voz Alexa, pensado para la ropa tendida. No depende de HA (la voz
+  // sí: si no hay alexaAnnouncer, solo manda Telegram).
+  let weatherWatcher = null;
+  if (config.weather.enabled) {
+    const weatherStore = createWeatherStore({ filePath: config.weather.historyPath, logger });
+    weatherWatcher = createWeatherWatcher({
+      logger,
+      scheduler,
+      notificationService,
+      store: weatherStore,
+      alexaAnnouncer: config.weather.alexaEnabled ? alexaAnnouncer : null,
+      latitude: config.weather.latitude,
+      longitude: config.weather.longitude,
+      checkIntervalMs: config.weather.checkIntervalMs,
+      lookaheadHours: config.weather.lookaheadHours,
+      probThreshold: config.weather.probThreshold,
+      precipThreshold: config.weather.precipThreshold,
+      alexaTarget: config.weather.alexaTarget,
+      alexaQuietStart: config.weather.alexaQuietStart,
+      alexaQuietEnd: config.weather.alexaQuietEnd,
+    });
+    weatherWatcher.start();
+  } else {
+    logger.info('Weather watcher disabled (set WEATHER_WATCHER_ENABLED=true to enable)');
+  }
+
   // Gmail digest diario (LUI-TSK-0031 / LUI-TSK-0064). Off por defecto:
   // requiere gmailDigest, notificación y GMAIL_DIGEST_ENABLED=true.
   //
@@ -686,6 +716,7 @@ async function main() {
     temperatureWatcher?.stop();
     batteryTracker?.stop();
     dishwasherWatcher?.stop();
+    weatherWatcher?.stop();
     await downloadWatcher.stop();
     await telegramStop();
     await webStop();
