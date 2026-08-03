@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { isYoutubeUrl, youtubeProgressText } from '../../../src/apps/telegram-bot/telegram-message-handler.js';
+import { isYoutubeUrl, youtubeProgressText, sanitizeFilename } from '../../../src/apps/telegram-bot/telegram-message-handler.js';
 
 describe('isYoutubeUrl (LUI-BUG-0012)', () => {
   it('detecta los formatos de YouTube', () => {
@@ -49,5 +49,18 @@ describe('youtubeProgressText (LUI-TSK-0090)', () => {
   });
   it('incluye la URL', () => {
     assert.match(youtubeProgressText(U, { stage: 'audio' }), /youtu\.be\/x/);
+  });
+});
+
+describe('sanitizeFilename (LUI-TSK-0091)', () => {
+  it('quita caracteres prohibidos y colapsa espacios', () => {
+    assert.equal(sanitizeFilename('Mi vídeo: cosas / raras?*'), 'Mi vídeo cosas raras');
+  });
+  it('usa el fallback si queda vacío', () => {
+    assert.equal(sanitizeFilename('   ', 'video'), 'video');
+    assert.equal(sanitizeFilename(null), 'video');
+  });
+  it('acota a 80 chars', () => {
+    assert.ok(sanitizeFilename('a'.repeat(200)).length <= 80);
   });
 });
