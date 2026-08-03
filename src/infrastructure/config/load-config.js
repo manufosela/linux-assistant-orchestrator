@@ -311,6 +311,11 @@ export function loadConfig(envPath = '.env') {
       // Franja en la que NUNCA suena por voz (Telegram sí). Default 22:00-09:00.
       alexaQuietStart: process.env.TEMP_ALEXA_QUIET_START ?? '22:00',
       alexaQuietEnd: process.env.TEMP_ALEXA_QUIET_END ?? '09:00',
+      // Suelo de cordura: descarta lecturas de interior imposibles (sensor roto
+      // tipo TS0222 que marca 0.0º). Ningún interior real baja de esto.
+      plausibleMin: Number(process.env.TEMP_PLAUSIBLE_MIN ?? 5),
+      // Histéresis (ºC) para re-armar cada alerta y no parpadear en el umbral.
+      hysteresis: Number(process.env.TEMP_HYSTERESIS ?? 1.0),
     },
 
     // LUI-TSK-0083: seguimiento de cambios de pila. Vigila los sensores de

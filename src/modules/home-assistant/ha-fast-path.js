@@ -135,7 +135,11 @@ function extractAreaPhrase(lower) {
 function handleHouseAverage(stateCache, deviceClass, houseAverageFilter) {
   const sensors = stateCache.findEntities({ deviceClass });
   const included = houseAverageFilter ? sensors.filter(houseAverageFilter) : sensors;
-  const valid = included.filter((s) => isFiniteNumber(s.state));
+  // Suelo de cordura: en la media de la CASA (interior) descartamos lecturas
+  // imposibles de sensores rotos (p.ej. el sensor de luz TS0222 reporta 0.0º/0%),
+  // que si no falsearían la media. No se aplica a la consulta por área concreta
+  // porque un exterior legítimo sí puede estar por debajo de 5º.
+  const valid = included.filter((s) => isFiniteNumber(s.state) && Number(s.state) >= HOUSE_AVERAGE_PLAUSIBLE_MIN);
   if (valid.length === 0) {
     return {
       handled: true,
@@ -258,6 +262,11 @@ async function handleOnOff(stateCache, haClient, action, target, logger) {
     };
   }
 }
+
+// Suelo de cordura para la media de la casa (interior): descarta lecturas
+// imposibles de sensores rotos (TS0222 de luz que marca 0.0º/0%). Ningún interior
+// real baja de esto ni en invierno.
+const HOUSE_AVERAGE_PLAUSIBLE_MIN = 5;
 
 /**
  * @param {string} value

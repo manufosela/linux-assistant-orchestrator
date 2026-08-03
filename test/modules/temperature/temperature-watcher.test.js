@@ -193,23 +193,64 @@ describe('createTemperatureWatcher — anti-spam y recuperación', () => {
     assert.match(notifier.sent[1].text, /Sigue bajando/);
   });
 
-  it('histéresis: no recupera al bajar de 30, solo al llegar a 25; sin "normalizada"', async () => {
+  it('tras calor, al bajar a ≤25 avisa "ha bajado" (nivel success, sin "normalizada")', async () => {
     const cache = buildFakeStateCache({ entities: [temp('sensor.cocina', 31.5, 'Cocina')] });
     const notifier = buildFakeNotifier();
     const w = makeWatcher(cache, notifier);
     await w.checkOnce();
-    assert.equal(notifier.sent.length, 1, 'alerta inicial');
-    // Baja a 28 (entre 25 y 30): sigue en alerta, sin nuevo aviso.
+    assert.equal(notifier.sent.length, 1, 'alerta inicial de calor');
+    // Baja a 28 (entre 25 y 30): calor se re-arma en silencio, fresco aún no.
     cache.setEntities([temp('sensor.cocina', 28, 'Cocina')]);
     await w.checkOnce();
-    assert.equal(notifier.sent.length, 1, 'a 28 aún no recupera');
-    // Baja a 24 (≤25): aviso de bajada, NO "normalizada".
+    assert.equal(notifier.sent.length, 1, 'a 28 no hay nuevo aviso');
+    // Baja a 24 (≤25): aviso de "ha bajado" (fresco), NO "normalizada".
     cache.setEntities([temp('sensor.cocina', 24, 'Cocina')]);
     await w.checkOnce();
     assert.equal(notifier.sent.length, 2);
-    assert.match(notifier.sent[1].text, /ha bajado/);
+    assert.match(notifier.sent[1].text, /[Hh]a bajado/);
     assert.doesNotMatch(notifier.sent[1].text, /normalizada/);
     assert.equal(notifier.sent[1].level, 'success');
+  });
+});
+
+describe('createTemperatureWatcher — alertas independientes (LUI-TSK-0089)', () => {
+  it('avisa "ha bajado a 25" AUNQUE no hubiera habido alerta de calor previa', async () => {
+    // La media arranca ya fresca (24): sin calor previo, debe avisar igual.
+    const cache = buildFakeStateCache({ entities: [temp('sensor.cocina', 24, 'Cocina')] });
+    const notifier = buildFakeNotifier();
+    const w = makeWatcher(cache, notifier);
+    await w.checkOnce();
+    assert.equal(notifier.sent.length, 1, 'avisa de fresco sin calor previo');
+    assert.match(notifier.sent[0].text, /[Hh]a bajado/);
+    assert.equal(notifier.sent[0].level, 'success');
+  });
+
+  it('calor y fresco son ciclos independientes: sube→calor, baja→fresco, sube→calor otra vez', async () => {
+    const cache = buildFakeStateCache({ entities: [temp('sensor.cocina', 31, 'Cocina')] });
+    const notifier = buildFakeNotifier();
+    const w = makeWatcher(cache, notifier);
+    await w.checkOnce(); // 31 → calor
+    assert.match(notifier.sent.at(-1).text, /calor/);
+    cache.setEntities([temp('sensor.cocina', 24, 'Cocina')]);
+    await w.checkOnce(); // 24 → fresco (y calor se re-arma)
+    assert.match(notifier.sent.at(-1).text, /[Hh]a bajado/);
+    cache.setEntities([temp('sensor.cocina', 31, 'Cocina')]);
+    await w.checkOnce(); // 31 → calor otra vez (fresco se re-arma)
+    assert.equal(notifier.sent.length, 3, 'tres avisos: calor, fresco, calor');
+    assert.match(notifier.sent.at(-1).text, /calor/);
+  });
+
+  it('suelo de cordura: descarta un sensor con área que marca 0.0º (TS0222)', async () => {
+    const cache = buildFakeStateCache({ entities: [
+      temp('sensor.ts0222_lux', 0.0, 'Salón'), // sensor de luz con área, temp basura
+      temp('sensor.cocina', 31.5, 'Cocina'),
+    ] });
+    const notifier = buildFakeNotifier();
+    const w = makeWatcher(cache, notifier);
+    await w.checkOnce();
+    assert.equal(notifier.sent.length, 1);
+    // media = 31.5 (solo cocina); si el 0.0 contara sería 15.75 y no avisaría de calor.
+    assert.match(notifier.sent[0].text, /Temperatura media: 31\.5º/);
   });
 });
 
