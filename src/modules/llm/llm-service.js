@@ -27,6 +27,7 @@ export function createLlmService(provider, config, logger) {
       private: isPrivate = true,
       maxTokens,
       temperature,
+      model,
     } = options;
 
     if (isPrivate && config.provider === 'cloud' && !config.allowCloudLlm) {
@@ -40,6 +41,7 @@ export function createLlmService(provider, config, logger) {
       systemPrompt,
       maxTokens,
       temperature,
+      model,
       metadata: {
         module: moduleName,
         operation,

@@ -80,3 +80,30 @@ describe('chunkText', () => {
     assert.equal(chunks[0].length, 30);
   });
 });
+
+describe('createTranscriptSummariser — modelo y progreso (LUI-BUG-0013 / LUI-TSK-0090)', () => {
+  it('pasa el model configurado en las opciones del LLM', async () => {
+    const calls = [];
+    const s = createTranscriptSummariser({ llmService: fakeLlm({ collect: calls }), model: 'coder' });
+    await s.summarise('hola');
+    assert.equal(calls[0].opts.model, 'coder');
+  });
+
+  it('sin model configurado NO añade la opción model (usa el default del provider)', async () => {
+    const calls = [];
+    const s = createTranscriptSummariser({ llmService: fakeLlm({ collect: calls }) });
+    await s.summarise('hola');
+    assert.equal('model' in calls[0].opts, false);
+  });
+
+  it('emite onProgress por cada chunk con index/total y el finalising', async () => {
+    const progress = [];
+    const s = createTranscriptSummariser({ llmService: fakeLlm({}), chunkChars: 20 });
+    const longText = 'frase a. '.repeat(20);
+    await s.summarise(longText, { onProgress: (p) => progress.push(p) });
+    assert.ok(progress.length >= 3, 'al menos un evento por chunk + el finalising');
+    assert.equal(progress[0].index, 1);
+    assert.ok(progress[0].total >= 2);
+    assert.equal(progress.at(-1).finalising, true);
+  });
+});

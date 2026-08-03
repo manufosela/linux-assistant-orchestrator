@@ -35,6 +35,8 @@ export function createYoutubeService({
   llmService,
   defaultLanguage = DEFAULT_LANGUAGE,
   summaryChunkChars = DEFAULT_SUMMARY_CHUNK_CHARS,
+  // Modelo del resumen (LUI-BUG-0013): 'coder' funciona; el default 'fast' sale vacío.
+  summariseModel = null,
   logger,
 } = {}) {
   if (!subtitleFetcher || !audioFetcher || !whisperClient || !llmService) {
@@ -42,7 +44,7 @@ export function createYoutubeService({
   }
 
   const summariser = createTranscriptSummariser({
-    llmService, chunkChars: summaryChunkChars, logger, module: 'youtube',
+    llmService, chunkChars: summaryChunkChars, logger, module: 'youtube', model: summariseModel,
   });
 
   /**
@@ -61,17 +63,26 @@ export function createYoutubeService({
   async function processVideo(url, opts = {}) {
     const language = opts.language ?? defaultLanguage;
     const withSummary = opts.withSummary !== false;
+    const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
 
-    const { transcript, source, videoId, title, lang, durationSec } = await fetchTranscript(url, language);
+    const { transcript, source, videoId, title, lang, durationSec } = await fetchTranscript(url, language, onProgress);
     if (!transcript || transcript.length === 0) {
       throw new YoutubeError('Transcript vacío', { code: 'EMPTY_TRANSCRIPT' });
     }
 
-    const summary = withSummary ? await summariser.summarise(transcript, { language, title }) : null;
+    onProgress?.({ stage: 'summarising' });
+    const summary = withSummary
+      ? await summariser.summarise(transcript, {
+          language,
+          title,
+          onProgress: (p) => onProgress?.({ stage: 'summarising', ...p }),
+        })
+      : null;
     return { videoId, title, lang, durationSec, source, transcript, summary };
   }
 
-  async function fetchTranscript(url, language) {
+  async function fetchTranscript(url, language, onProgress) {
+    onProgress?.({ stage: 'subtitles' });
     logger?.debug({ url }, 'youtube: trying subtitles first');
     const subs = await subtitleFetcher.fetchSubtitles(url, { langs: [language, 'en'] });
     if (subs) {
@@ -85,8 +96,10 @@ export function createYoutubeService({
       };
     }
     logger?.info({ url }, 'youtube: no subtitles, falling back to audio + Whisper');
+    onProgress?.({ stage: 'audio' });
     const audio = await audioFetcher.fetchAudio(url);
     try {
+      onProgress?.({ stage: 'transcribing' });
       const { text } = await whisperClient.transcribe(audio.audioPath, { language });
       return {
         transcript: text,

@@ -195,6 +195,9 @@ export function loadConfig(envPath = '.env') {
       summaryChunkChars: Number(process.env.YOUTUBE_SUMMARY_CHUNK_CHARS ?? 8000),
       subtitleTimeoutMs: Number(process.env.YOUTUBE_SUBTITLE_TIMEOUT_MS ?? 60000),
       audioTimeoutMs: Number(process.env.YOUTUBE_AUDIO_TIMEOUT_MS ?? 600000),
+      // Modelo del resumen (LUI-BUG-0013): 'coder' funciona en el cluster; el
+      // default 'fast' devuelve resúmenes vacíos en español (igual que el inbox).
+      summariseModel: process.env.YOUTUBE_SUMMARISE_MODEL ?? 'coder',
     },
 
     email: {

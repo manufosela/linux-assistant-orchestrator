@@ -23,6 +23,25 @@ export async function createThinkingIndicator(bot, chatId, options = {}) {
   const messageId = sent?.message_id;
 
   let resolved = false;
+  let lastText = text;
+
+  /**
+   * Actualiza el placeholder con texto de progreso (best-effort). No hace nada
+   * si ya se finalizó o si el texto no cambia. Los errores se ignoran: el
+   * progreso es informativo y no debe romper el trabajo en curso.
+   *
+   * @param {string} newText
+   * @returns {Promise<void>}
+   */
+  async function update(newText) {
+    if (resolved || newText === lastText) return;
+    lastText = newText;
+    try {
+      await bot.editMessageText(newText, { chat_id: chatId, message_id: messageId });
+    } catch {
+      // best-effort: puede fallar por "message not modified", rate limit, etc.
+    }
+  }
 
   /**
    * Replaces the placeholder with the final text. Idempotent: only the first call has effect.
@@ -76,12 +95,13 @@ export async function createThinkingIndicator(bot, chatId, options = {}) {
     }
   }
 
-  return { messageId, finish, cancel };
+  return { messageId, update, finish, cancel };
 }
 
 /**
  * @typedef {Object} ThinkingIndicator
  * @property {number | undefined} messageId - Telegram message id of the placeholder
+ * @property {(newText: string) => Promise<void>} update - Best-effort progress edit of the placeholder
  * @property {(finalText: string, opts?: object) => Promise<void>} finish - Replace placeholder with final text
  * @property {() => Promise<void>} cancel - Delete placeholder without sending a replacement
  */

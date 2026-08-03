@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { isYoutubeUrl } from '../../../src/apps/telegram-bot/telegram-message-handler.js';
+import { isYoutubeUrl, youtubeProgressText } from '../../../src/apps/telegram-bot/telegram-message-handler.js';
 
 describe('isYoutubeUrl (LUI-BUG-0012)', () => {
   it('detecta los formatos de YouTube', () => {
@@ -35,5 +35,19 @@ describe('isYoutubeUrl (LUI-BUG-0012)', () => {
     for (const url of no) {
       assert.equal(isYoutubeUrl(url), false, `NO debería detectar: ${url}`);
     }
+  });
+});
+
+describe('youtubeProgressText (LUI-TSK-0090)', () => {
+  const U = 'https://youtu.be/x';
+  it('mapea cada etapa a un texto', () => {
+    assert.match(youtubeProgressText(U, { stage: 'subtitles' }), /subtítulos/i);
+    assert.match(youtubeProgressText(U, { stage: 'audio' }), /audio/i);
+    assert.match(youtubeProgressText(U, { stage: 'transcribing' }), /Transcribiendo/i);
+    assert.match(youtubeProgressText(U, { stage: 'summarising', index: 3, total: 14 }), /3\/14/);
+    assert.match(youtubeProgressText(U, { stage: 'summarising', finalising: true }), /final/i);
+  });
+  it('incluye la URL', () => {
+    assert.match(youtubeProgressText(U, { stage: 'audio' }), /youtu\.be\/x/);
   });
 });

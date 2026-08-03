@@ -231,7 +231,8 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       await bot.sendMessage(chatId, 'Uso: /youtube &lt;url&gt;', { parse_mode: 'HTML' });
       return;
     }
-    await processYoutubeReply(url, message);
+    // Fire-and-forget: el procesado es largo; no bloquea el handler ni otros comandos.
+    processYoutubeReply(url, message).catch((e) => logger.warn({ err: e?.message }, 'youtube reply crashed'));
   });
 
   router.register('/search', async (message) => {
@@ -934,12 +935,22 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       text: `🎬 Procesando ${url} …`,
       logger,
     });
+    // Watchdog (TSK-0090): si tarda de más, reasegura al usuario sin abortar.
+    let finished = false;
+    const watchdog = setTimeout(() => {
+      if (!finished) {
+        indicator.update(`🎬 Procesando ${url}\n⏳ Está tardando más de lo normal (vídeo largo), pero sigue en marcha…`);
+      }
+    }, YOUTUBE_WATCHDOG_MS);
     try {
-      const result = await youtubeService.processVideo(url);
+      const result = await youtubeService.processVideo(url, {
+        onProgress: (p) => { indicator.update(youtubeProgressText(url, p)); },
+      });
       const titleLine = result.title ? `🎬 <b>${escapeHtml(result.title)}</b>\n` : '';
       const sourceLabel = result.source === 'subtitles' ? 'subtítulos' : 'whisper';
       const sourceLine = `<i>fuente: ${sourceLabel}${result.durationSec ? ` · ${Math.round(result.durationSec / 60)} min` : ''}</i>\n\n`;
-      const summary = result.summary ?? '(sin resumen)';
+      const summaryRaw = (result.summary ?? '').trim();
+      const summary = summaryRaw || '⚠️ El resumen salió vacío (revisa el modelo del LLM).';
       const body = escapeHtml(summary).slice(0, 3800);
       await indicator.finish(`${titleLine}${sourceLine}${body}`, { parse_mode: 'HTML' });
       const conversation = getConversation(chatId);
@@ -947,6 +958,9 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     } catch (error) {
       logger.warn({ chatId, url, err: error.message }, 'youtube processing failed');
       await indicator.finish(`❌ No pude procesar el vídeo: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+    } finally {
+      finished = true;
+      clearTimeout(watchdog);
     }
   }
 
@@ -1111,7 +1125,8 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     // capturador genérico: la HTML de YouTube supera el tope de body del
     // url-fetcher y daba "Body exceeds 512000 bytes" (LUI-BUG-0012).
     if (leadingUrl && youtubeService && isYoutubeUrl(leadingUrl)) {
-      await processYoutubeReply(leadingUrl, message);
+      // Fire-and-forget: no bloquea el handler ni otros comandos mientras procesa.
+      processYoutubeReply(leadingUrl, message).catch((e) => logger.warn({ err: e?.message }, 'youtube reply crashed'));
       return;
     }
     if (urlCapture && inboxStore && leadingUrl) {
@@ -1276,6 +1291,32 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
  */
 export function isYoutubeUrl(url) {
   return /^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtu\.be\/|youtube\.com\/(?:watch\?|shorts\/|embed\/|live\/|v\/))/i.test(String(url ?? '').trim());
+}
+
+// Watchdog: si el procesado de un vídeo tarda más de esto, se reasegura al
+// usuario (sin abortar). Los vídeos largos con Whisper + resumen por chunks
+// pueden pasar de la media hora en el cluster local (LUI-TSK-0090).
+const YOUTUBE_WATCHDOG_MS = 8 * 60 * 1000;
+
+/**
+ * Texto de progreso para el mensaje de Telegram según la etapa del procesado.
+ *
+ * @param {string} url
+ * @param {{ stage?: string, index?: number, total?: number, finalising?: boolean }} [p]
+ * @returns {string}
+ */
+export function youtubeProgressText(url, p = {}) {
+  const base = `🎬 Procesando ${url}\n`;
+  switch (p.stage) {
+    case 'subtitles': return `${base}⏳ Buscando subtítulos…`;
+    case 'audio': return `${base}⏬ Descargando audio…`;
+    case 'transcribing': return `${base}📝 Transcribiendo con Whisper (los vídeos largos tardan)…`;
+    case 'summarising':
+      if (p.finalising) return `${base}🧩 Combinando el resumen final…`;
+      if (p.total) return `${base}✍️ Resumiendo… (${p.index}/${p.total})`;
+      return `${base}✍️ Resumiendo…`;
+    default: return `${base}⏳ Procesando…`;
+  }
 }
 
 /**
