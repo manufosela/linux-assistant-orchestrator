@@ -22,6 +22,10 @@ export function createTranscriptSummariser({
   chunkChars = 8000,
   logger,
   module = 'summarisation',
+  // Modelo LLM para el resumen. null = default del provider. El default 'fast'
+  // da respuestas VACÍAS en el cluster para resúmenes en español (LUI-BUG-0013),
+  // por eso YouTube/media lo fijan a 'coder'.
+  model = null,
 } = {}) {
   if (!llmService) throw new Error('createTranscriptSummariser requires llmService');
 
@@ -33,6 +37,7 @@ export function createTranscriptSummariser({
   async function summarise(text, opts = {}) {
     const language = opts.language ?? 'es';
     const title = opts.title ?? null;
+    const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
     if (!text || text.length === 0) return '';
     if (text.length <= chunkChars) {
       return summariseChunk(text, { language, title, isFinal: true });
@@ -40,9 +45,11 @@ export function createTranscriptSummariser({
     const chunks = chunkText(text, chunkChars);
     logger?.info({ chunks: chunks.length, totalChars: text.length, module }, 'transcript: chunking summary');
     const partials = [];
-    for (const chunk of chunks) {
+    for (const [i, chunk] of chunks.entries()) {
+      onProgress?.({ index: i + 1, total: chunks.length });
       partials.push(await summariseChunk(chunk, { language, title, isFinal: false }));
     }
+    onProgress?.({ index: chunks.length, total: chunks.length, finalising: true });
     return summariseChunk(partials.join('\n\n'), { language, title, isFinal: true });
   }
 
@@ -55,6 +62,7 @@ export function createTranscriptSummariser({
       module,
       operation: isFinal ? 'summary-final' : 'summary-chunk',
       private: true,
+      ...(model ? { model } : {}),
     });
   }
 

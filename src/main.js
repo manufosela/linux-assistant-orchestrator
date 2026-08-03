@@ -303,6 +303,7 @@ async function main() {
         llmService,
         defaultLanguage: config.youtube.defaultLanguage,
         summaryChunkChars: config.youtube.summaryChunkChars,
+        summariseModel: config.youtube.summariseModel,
         logger,
       })
     : undefined;

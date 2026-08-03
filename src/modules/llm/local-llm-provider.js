@@ -37,7 +37,9 @@ export function createLocalLlmProvider(config, logger) {
       messages.push({ role: 'system', content: systemPrompt });
     }
     messages.push({ role: 'user', content: prompt });
-    return chat({ messages, maxTokens, temperature, metadata, model: config.model });
+    // Respeta un modelo explícito (p.ej. el resumen de YouTube usa 'coder', no el
+    // default 'fast' que da respuestas vacías en el cluster). LUI-BUG-0013.
+    return chat({ messages, maxTokens, temperature, metadata, model: request.model ?? config.model });
   }
 
   /**

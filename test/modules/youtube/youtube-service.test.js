@@ -147,3 +147,40 @@ describe('chunkText', () => {
     assert.equal(chunks.length, 1);
   });
 });
+
+describe('createYoutubeService — modelo y progreso (LUI-BUG-0013 / LUI-TSK-0090)', () => {
+  it('emite onProgress con las etapas (subtítulos → resumen)', async () => {
+    const s = stubs({ subsResult: { videoId: 'v1', title: 'T', lang: 'es', text: 'transcripción de subs' } });
+    const service = createYoutubeService({ ...s });
+    const stages = [];
+    await service.processVideo('https://youtu.be/x', { onProgress: (p) => stages.push(p.stage) });
+    assert.ok(stages.includes('subtitles'), 'etapa subtitles');
+    assert.ok(stages.includes('summarising'), 'etapa summarising');
+  });
+
+  it('sin subtítulos emite audio + transcribing antes del resumen', async () => {
+    const s = stubs({
+      subsResult: null,
+      audioResult: { videoId: 'v1', title: 'T', durationSec: 60 },
+      whisperText: 'transcripción por whisper',
+    });
+    const service = createYoutubeService({ ...s });
+    const stages = [];
+    await service.processVideo('https://youtu.be/x', { onProgress: (p) => stages.push(p.stage) });
+    assert.deepEqual(
+      stages.filter((v, i) => stages.indexOf(v) === i),
+      ['subtitles', 'audio', 'transcribing', 'summarising'],
+    );
+  });
+
+  it('pasa summariseModel al LLM del resumen', async () => {
+    const models = [];
+    const subtitleFetcher = { fetchSubtitles: async () => ({ videoId: 'v1', title: 'T', lang: 'es', text: 'texto' }) };
+    const audioFetcher = { fetchAudio: async () => ({ cleanup: async () => {} }) };
+    const whisperClient = { transcribe: async () => ({ text: '' }) };
+    const llmService = { generateText: async (_p, opts) => { models.push(opts?.model); return 'R'; } };
+    const service = createYoutubeService({ subtitleFetcher, audioFetcher, whisperClient, llmService, summariseModel: 'coder' });
+    await service.processVideo('https://youtu.be/x');
+    assert.ok(models.includes('coder'), 'el resumen usa el modelo coder');
+  });
+});
