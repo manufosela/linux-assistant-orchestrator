@@ -519,6 +519,8 @@ async function main() {
       alexaTarget: config.temperature.alexaTarget,
       alexaQuietStart: config.temperature.alexaQuietStart,
       alexaQuietEnd: config.temperature.alexaQuietEnd,
+      plausibleMin: config.temperature.plausibleMin,
+      hysteresis: config.temperature.hysteresis,
     });
     temperatureWatcher.start();
   } else if (config.temperature.enabled) {
