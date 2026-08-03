@@ -955,6 +955,8 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       await indicator.finish(`${titleLine}${sourceLine}${body}`, { parse_mode: 'HTML' });
       const conversation = getConversation(chatId);
       conversation.appendContext(`YouTube ${url}`, `# ${result.title ?? url}\n\n${result.transcript}`);
+      // Adjuntar transcripción + resumen completos como ficheros descargables (LUI-TSK-0091).
+      await sendYoutubeAttachments(chatId, result.title ?? url, result.transcript, summaryRaw);
     } catch (error) {
       logger.warn({ chatId, url, err: error.message }, 'youtube processing failed');
       await indicator.finish(`❌ No pude procesar el vídeo: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
@@ -962,6 +964,30 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       finished = true;
       clearTimeout(watchdog);
     }
+  }
+
+  /**
+   * Adjunta el resumen (.md) y la transcripción (.txt) completos como ficheros
+   * descargables en Telegram. Best-effort: si un envío falla, se registra pero no
+   * rompe la respuesta. No manda ficheros vacíos.
+   *
+   * @param {number|string} chatId
+   * @param {string} title
+   * @param {string} transcript
+   * @param {string} summary
+   */
+  async function sendYoutubeAttachments(chatId, title, transcript, summary) {
+    const safe = sanitizeFilename(title);
+    const attach = async (content, filename, contentType) => {
+      if (!content || !content.trim()) return;
+      try {
+        await bot.sendDocument(chatId, Buffer.from(content, 'utf8'), {}, { filename, contentType });
+      } catch (error) {
+        logger.warn({ chatId, filename, err: error?.message }, 'youtube: sendDocument failed');
+      }
+    };
+    await attach(summary, `${safe} - resumen.md`, 'text/markdown');
+    await attach(transcript, `${safe} - transcripción.txt`, 'text/plain');
   }
 
   async function handleInboxFile(msg, kind) {
@@ -1317,6 +1343,22 @@ export function youtubeProgressText(url, p = {}) {
       return `${base}✍️ Resumiendo…`;
     default: return `${base}⏳ Procesando…`;
   }
+}
+
+/**
+ * Convierte un título en un nombre de fichero seguro (sin caracteres prohibidos
+ * en Windows/Unix, sin dobles espacios), acotado a 80 chars.
+ *
+ * @param {string} name
+ * @param {string} [fallback='video']
+ * @returns {string}
+ */
+export function sanitizeFilename(name, fallback = 'video') {
+  const base = String(name ?? '')
+    .replace(/[/\\:*?"<>|\n\r\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return (base || fallback).slice(0, 80);
 }
 
 /**
