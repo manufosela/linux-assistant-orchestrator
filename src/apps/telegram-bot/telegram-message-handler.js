@@ -231,31 +231,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       await bot.sendMessage(chatId, 'Uso: /youtube &lt;url&gt;', { parse_mode: 'HTML' });
       return;
     }
-    if (!youtubeService) {
-      await bot.sendMessage(chatId, 'YouTube no configurado (falta WHISPER_BASE_URL).');
-      return;
-    }
-    const indicator = await createThinkingIndicator(bot, chatId, {
-      text: `🎬 Procesando ${url} …`,
-      logger,
-    });
-    try {
-      const result = await youtubeService.processVideo(url);
-      const titleLine = result.title ? `🎬 <b>${escapeHtml(result.title)}</b>\n` : '';
-      const sourceLabel = result.source === 'subtitles' ? 'subtítulos' : 'whisper';
-      const sourceLine = `<i>fuente: ${sourceLabel}${result.durationSec ? ` · ${Math.round(result.durationSec / 60)} min` : ''}</i>\n\n`;
-      const summary = result.summary ?? '(sin resumen)';
-      // Telegram limita a 4096 chars/mensaje; dejamos colchón para HTML tags.
-      const body = escapeHtml(summary).slice(0, 3800);
-      await indicator.finish(`${titleLine}${sourceLine}${body}`, { parse_mode: 'HTML' });
-      // Adjuntar el transcript completo al contexto del chat para que el LLM
-      // pueda responder preguntas posteriores sobre el contenido del vídeo.
-      const conversation = getConversation(chatId);
-      conversation.appendContext(`YouTube ${url}`, `# ${result.title ?? url}\n\n${result.transcript}`);
-    } catch (error) {
-      logger.warn({ chatId, url, err: error.message }, '/youtube failed');
-      await indicator.finish(`❌ No pude procesar el vídeo: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
-    }
+    await processYoutubeReply(url, message);
   });
 
   router.register('/search', async (message) => {
@@ -939,6 +915,41 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     }
   }
 
+  /**
+   * Procesa un vídeo de YouTube (transcribe + resume) y responde en Telegram.
+   * Compartido por el comando /youtube y la auto-detección de URLs, para que
+   * pegar un enlace de YouTube NO caiga en el capturador genérico (cuya HTML
+   * supera el tope de body y da "Body exceeds ... bytes").
+   *
+   * @param {string} url
+   * @param {object} msg Telegram message
+   */
+  async function processYoutubeReply(url, msg) {
+    const chatId = msg.chat.id;
+    if (!youtubeService) {
+      await bot.sendMessage(chatId, 'YouTube no configurado (falta WHISPER_BASE_URL).');
+      return;
+    }
+    const indicator = await createThinkingIndicator(bot, chatId, {
+      text: `🎬 Procesando ${url} …`,
+      logger,
+    });
+    try {
+      const result = await youtubeService.processVideo(url);
+      const titleLine = result.title ? `🎬 <b>${escapeHtml(result.title)}</b>\n` : '';
+      const sourceLabel = result.source === 'subtitles' ? 'subtítulos' : 'whisper';
+      const sourceLine = `<i>fuente: ${sourceLabel}${result.durationSec ? ` · ${Math.round(result.durationSec / 60)} min` : ''}</i>\n\n`;
+      const summary = result.summary ?? '(sin resumen)';
+      const body = escapeHtml(summary).slice(0, 3800);
+      await indicator.finish(`${titleLine}${sourceLine}${body}`, { parse_mode: 'HTML' });
+      const conversation = getConversation(chatId);
+      conversation.appendContext(`YouTube ${url}`, `# ${result.title ?? url}\n\n${result.transcript}`);
+    } catch (error) {
+      logger.warn({ chatId, url, err: error.message }, 'youtube processing failed');
+      await indicator.finish(`❌ No pude procesar el vídeo: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+    }
+  }
+
   async function handleInboxFile(msg, kind) {
     const chatId = msg.chat.id;
     let item;
@@ -1095,12 +1106,17 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     // and the inbox + urlCapture are wired, treat it as "save this article"
     // instead of chatting. Text in the middle of a chat ("mira esto: <url>")
     // does NOT trigger capture — only when the URL is the first token.
-    if (urlCapture && inboxStore) {
-      const leadingUrl = extractLeadingUrl(text);
-      if (leadingUrl) {
-        await captureUrlReply(leadingUrl, message);
-        return;
-      }
+    const leadingUrl = extractLeadingUrl(text);
+    // Enlaces de YouTube → procesador de vídeo (transcribe + resume), NO al
+    // capturador genérico: la HTML de YouTube supera el tope de body del
+    // url-fetcher y daba "Body exceeds 512000 bytes" (LUI-BUG-0012).
+    if (leadingUrl && youtubeService && isYoutubeUrl(leadingUrl)) {
+      await processYoutubeReply(leadingUrl, message);
+      return;
+    }
+    if (urlCapture && inboxStore && leadingUrl) {
+      await captureUrlReply(leadingUrl, message);
+      return;
     }
 
     // Inbox read/summarise (TSK-0054): "lee el último", "resume el último estudio".
@@ -1248,6 +1264,18 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       await indicator.finish('❌ El LLM no respondió. Inténtalo de nuevo en un momento.');
     }
   });
+}
+
+/**
+ * ¿Es una URL de YouTube (vídeo, short, embed o live)? Cubre youtu.be y
+ * youtube.com (con o sin www / m.). Se usa para enrutar los enlaces al
+ * procesador de vídeo en vez del capturador genérico (LUI-BUG-0012).
+ *
+ * @param {string} url
+ * @returns {boolean}
+ */
+export function isYoutubeUrl(url) {
+  return /^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtu\.be\/|youtube\.com\/(?:watch\?|shorts\/|embed\/|live\/|v\/))/i.test(String(url ?? '').trim());
 }
 
 /**

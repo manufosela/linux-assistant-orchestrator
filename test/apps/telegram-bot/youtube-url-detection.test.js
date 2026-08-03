@@ -1,0 +1,39 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { isYoutubeUrl } from '../../../src/apps/telegram-bot/telegram-message-handler.js';
+
+describe('isYoutubeUrl (LUI-BUG-0012)', () => {
+  it('detecta los formatos de YouTube', () => {
+    const yes = [
+      'https://youtu.be/AZ8ReGw2Qqs',
+      'http://youtu.be/AZ8ReGw2Qqs',
+      'youtu.be/AZ8ReGw2Qqs',
+      'https://www.youtube.com/watch?v=AZ8ReGw2Qqs',
+      'https://youtube.com/watch?v=AZ8ReGw2Qqs&t=30',
+      'https://m.youtube.com/watch?v=AZ8ReGw2Qqs',
+      'https://www.youtube.com/shorts/abc123',
+      'https://www.youtube.com/embed/abc123',
+      'https://www.youtube.com/live/abc123',
+    ];
+    for (const url of yes) {
+      assert.equal(isYoutubeUrl(url), true, `debería detectar: ${url}`);
+    }
+  });
+
+  it('NO detecta URLs que no son de YouTube', () => {
+    const no = [
+      'https://elpais.com/articulo-sobre-youtube',   // "youtube" en el path, no el dominio
+      'https://vimeo.com/12345',
+      'https://example.com/watch?v=abc',
+      'https://myyoutube.com/watch?v=abc',            // dominio parecido, no es youtube.com
+      'texto sin url',
+      '',
+      null,
+      undefined,
+    ];
+    for (const url of no) {
+      assert.equal(isYoutubeUrl(url), false, `NO debería detectar: ${url}`);
+    }
+  });
+});
