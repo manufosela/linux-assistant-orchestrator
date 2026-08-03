@@ -55,6 +55,24 @@ function parseCsvNumbers(raw, fallback) {
 }
 
 /**
+ * Parsea "entity:label,entity:label" → [{ entity, label }]. Para las válvulas de
+ * riego que vigila el parte diario de salud.
+ *
+ * @param {string | undefined} raw
+ * @returns {Array<{ entity: string, label: string }>}
+ */
+function parseValves(raw) {
+  return parseCsvList(raw)
+    .map((pair) => {
+      const idx = pair.indexOf(':');
+      const entity = (idx === -1 ? pair : pair.slice(0, idx)).trim();
+      const label = idx === -1 ? entity : pair.slice(idx + 1).trim();
+      return entity ? { entity, label } : null;
+    })
+    .filter(Boolean);
+}
+
+/**
  * Loads and validates all configuration from environment variables.
  * Must be called once at startup after dotenv is loaded.
  *
@@ -376,6 +394,23 @@ export function loadConfig(envPath = '.env') {
       alexaQuietEnd: process.env.WEATHER_ALEXA_QUIET_END ?? '08:00',
       historyPath:
         process.env.WEATHER_HISTORY_PATH ?? join(homedir(), '.config', 'luis', 'weather-alert.json'),
+    },
+
+    // Parte diario de salud (LUI-TSK-0092): comprueba y LISTA qué está OK/activo
+    // (HA, watchers, persianas, riego, temperatura) en vez de un "todo correcto"
+    // ciego. Detecta fallos silenciosos como una válvula de riego muerta.
+    health: {
+      enabled: process.env.HEALTH_REPORT_ENABLED !== 'false',
+      reportHour: Number(process.env.HEALTH_REPORT_HOUR ?? 7),
+      reportMinute: Number(process.env.HEALTH_REPORT_MINUTE ?? 30),
+      coverEntity: process.env.HEALTH_COVER_ENTITY ?? 'cover.persiana_salon_cortina',
+      persianaPrefix: process.env.HEALTH_PERSIANA_PREFIX ?? 'automation.persiana_verano_',
+      // Válvulas de riego a vigilar: "entity:etiqueta,entity:etiqueta".
+      riegoValves: parseValves(
+        process.env.HEALTH_RIEGO_VALVES
+          ?? 'switch.wd_01gde_switch_1:canal 1,switch.wd_01gde_switch_2:canal 2',
+      ),
+      riegoStaleHours: Number(process.env.HEALTH_RIEGO_STALE_HOURS ?? 36),
     },
   };
 

@@ -40,6 +40,7 @@ import { createDishwasherWatcher } from './modules/dishwasher/dishwasher-watcher
 import { createDishwasherHistoryStore } from './modules/dishwasher/dishwasher-history-store.js';
 import { createWeatherWatcher } from './modules/weather/weather-watcher.js';
 import { createWeatherStore } from './modules/weather/weather-store.js';
+import { createDailyHealthReport } from './modules/health/daily-health-report.js';
 import { createPrometheusClient } from './modules/prometheus/prometheus-client.js';
 import { createGoogleAuth } from './modules/google/google-auth.js';
 import { createGmailClient } from './modules/email/gmail-client.js';
@@ -149,6 +150,7 @@ async function main() {
     { name: 'battery', status: config.battery.enabled ? 'enabled' : 'disabled' },
     { name: 'dishwasher', status: config.dishwasher.enabled ? 'enabled' : 'disabled' },
     { name: 'weather', status: config.weather.enabled ? 'enabled' : 'disabled' },
+    { name: 'health', status: config.health.enabled ? 'enabled' : 'disabled' },
   ];
 
   const statusService = createAssistantStatusService({
@@ -613,6 +615,40 @@ async function main() {
     logger.info('Weather watcher disabled (set WEATHER_WATCHER_ENABLED=true to enable)');
   }
 
+  // Parte diario de salud (LUI-TSK-0092) — comprueba y LISTA qué está OK/activo
+  // (HA, watchers, persianas, riego, temperatura) y detecta fallos silenciosos.
+  let dailyHealthReport = null;
+  if (config.health.enabled && config.homeAssistant.baseUrl && config.homeAssistant.token) {
+    const fetchStates = async () => {
+      const res = await fetch(`${config.homeAssistant.baseUrl}/api/states`, {
+        headers: { Authorization: `Bearer ${config.homeAssistant.token}` },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) throw new Error(`HA ${res.status}`);
+      return res.json();
+    };
+    dailyHealthReport = createDailyHealthReport({
+      logger,
+      scheduler,
+      notificationService,
+      fetchStates,
+      capabilities: moduleStatuses,
+      reportHour: config.health.reportHour,
+      reportMinute: config.health.reportMinute,
+      config: {
+        coverEntity: config.health.coverEntity,
+        persianaPrefix: config.health.persianaPrefix,
+        riegoValves: config.health.riegoValves,
+        riegoStaleHours: config.health.riegoStaleHours,
+        outdoorEntity: config.temperature.outdoorEntity,
+        plausibleMin: config.temperature.plausibleMin,
+      },
+    });
+    dailyHealthReport.start();
+  } else if (config.health.enabled) {
+    logger.info('Daily health report enabled but Home Assistant is not configured — skipped');
+  }
+
   // Gmail digest diario (LUI-TSK-0031 / LUI-TSK-0064). Off por defecto:
   // requiere gmailDigest, notificación y GMAIL_DIGEST_ENABLED=true.
   //
@@ -720,6 +756,7 @@ async function main() {
     batteryTracker?.stop();
     dishwasherWatcher?.stop();
     weatherWatcher?.stop();
+    dailyHealthReport?.stop();
     await downloadWatcher.stop();
     await telegramStop();
     await webStop();
