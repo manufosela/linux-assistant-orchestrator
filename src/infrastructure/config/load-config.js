@@ -411,6 +411,23 @@ export function loadConfig(envPath = '.env') {
           ?? 'switch.wd_01gde_switch_1:canal 1,switch.wd_01gde_switch_2:canal 2',
       ),
       riegoStaleHours: Number(process.env.HEALTH_RIEGO_STALE_HOURS ?? 36),
+      coverStaleHours: Number(process.env.HEALTH_COVER_STALE_HOURS ?? 12),
+    },
+
+    // Guardián Tuya (LUI-TSK-0093): la integración Tuya se cuelga sola cada pocos
+    // días (persiana + riego se quedan mudos). Vigila el last_updated y, si algún
+    // dispositivo lleva mudo > staleHours, recarga la integración y avisa.
+    tuya: {
+      guardianEnabled: process.env.TUYA_GUARDIAN_ENABLED !== 'false',
+      watchedEntities: parseCsvList(
+        process.env.TUYA_WATCHED_ENTITIES
+          ?? 'cover.persiana_salon_cortina,switch.wd_01gde_switch_1,switch.wd_01gde_switch_2',
+      ),
+      staleHours: Number(process.env.TUYA_STALE_HOURS ?? 8),
+      checkIntervalMs: Number(process.env.TUYA_CHECK_INTERVAL_MS ?? 4 * 60 * 60 * 1000),
+      minReloadGapMs: Number(process.env.TUYA_MIN_RELOAD_GAP_MS ?? 2 * 60 * 60 * 1000),
+      // Entidad Tuya cuyo config_entry se recarga (reload_config_entry).
+      reloadEntity: process.env.TUYA_RELOAD_ENTITY ?? 'cover.persiana_salon_cortina',
     },
   };
 
