@@ -41,6 +41,7 @@ import { createDishwasherHistoryStore } from './modules/dishwasher/dishwasher-hi
 import { createWeatherWatcher } from './modules/weather/weather-watcher.js';
 import { createWeatherStore } from './modules/weather/weather-store.js';
 import { createDailyHealthReport } from './modules/health/daily-health-report.js';
+import { createTuyaGuardian } from './modules/health/tuya-guardian.js';
 import { createPrometheusClient } from './modules/prometheus/prometheus-client.js';
 import { createGoogleAuth } from './modules/google/google-auth.js';
 import { createGmailClient } from './modules/email/gmail-client.js';
@@ -151,6 +152,7 @@ async function main() {
     { name: 'dishwasher', status: config.dishwasher.enabled ? 'enabled' : 'disabled' },
     { name: 'weather', status: config.weather.enabled ? 'enabled' : 'disabled' },
     { name: 'health', status: config.health.enabled ? 'enabled' : 'disabled' },
+    { name: 'tuya-guardian', status: config.tuya.guardianEnabled ? 'enabled' : 'disabled' },
   ];
 
   const statusService = createAssistantStatusService({
@@ -615,11 +617,12 @@ async function main() {
     logger.info('Weather watcher disabled (set WEATHER_WATCHER_ENABLED=true to enable)');
   }
 
-  // Parte diario de salud (LUI-TSK-0092) — comprueba y LISTA qué está OK/activo
-  // (HA, watchers, persianas, riego, temperatura) y detecta fallos silenciosos.
+  // Salud/observabilidad de la casa: parte diario (LUI-TSK-0092) + guardián Tuya
+  // (LUI-TSK-0093). Comparten fetchStates; requieren HA configurado.
   let dailyHealthReport = null;
-  if (config.health.enabled && config.homeAssistant.baseUrl && config.homeAssistant.token) {
-    const fetchStates = async () => {
+  let tuyaGuardian = null;
+  if (config.homeAssistant.baseUrl && config.homeAssistant.token) {
+    const haFetchStates = async () => {
       const res = await fetch(`${config.homeAssistant.baseUrl}/api/states`, {
         headers: { Authorization: `Bearer ${config.homeAssistant.token}` },
         signal: AbortSignal.timeout(10000),
@@ -627,26 +630,54 @@ async function main() {
       if (!res.ok) throw new Error(`HA ${res.status}`);
       return res.json();
     };
-    dailyHealthReport = createDailyHealthReport({
-      logger,
-      scheduler,
-      notificationService,
-      fetchStates,
-      capabilities: moduleStatuses,
-      reportHour: config.health.reportHour,
-      reportMinute: config.health.reportMinute,
-      config: {
-        coverEntity: config.health.coverEntity,
-        persianaPrefix: config.health.persianaPrefix,
-        riegoValves: config.health.riegoValves,
-        riegoStaleHours: config.health.riegoStaleHours,
-        outdoorEntity: config.temperature.outdoorEntity,
-        plausibleMin: config.temperature.plausibleMin,
-      },
-    });
-    dailyHealthReport.start();
-  } else if (config.health.enabled) {
-    logger.info('Daily health report enabled but Home Assistant is not configured — skipped');
+
+    if (config.health.enabled) {
+      dailyHealthReport = createDailyHealthReport({
+        logger,
+        scheduler,
+        notificationService,
+        fetchStates: haFetchStates,
+        capabilities: moduleStatuses,
+        reportHour: config.health.reportHour,
+        reportMinute: config.health.reportMinute,
+        config: {
+          coverEntity: config.health.coverEntity,
+          persianaPrefix: config.health.persianaPrefix,
+          riegoValves: config.health.riegoValves,
+          riegoStaleHours: config.health.riegoStaleHours,
+          coverStaleHours: config.health.coverStaleHours,
+          outdoorEntity: config.temperature.outdoorEntity,
+          plausibleMin: config.temperature.plausibleMin,
+        },
+      });
+      dailyHealthReport.start();
+    }
+
+    if (config.tuya.guardianEnabled) {
+      const reloadTuya = async () => {
+        const res = await fetch(`${config.homeAssistant.baseUrl}/api/services/homeassistant/reload_config_entry`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${config.homeAssistant.token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entity_id: config.tuya.reloadEntity }),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!res.ok) throw new Error(`reload_config_entry ${res.status}`);
+      };
+      tuyaGuardian = createTuyaGuardian({
+        logger,
+        scheduler,
+        notificationService,
+        fetchStates: haFetchStates,
+        reloadTuya,
+        watchedEntities: config.tuya.watchedEntities,
+        staleHours: config.tuya.staleHours,
+        checkIntervalMs: config.tuya.checkIntervalMs,
+        minReloadGapMs: config.tuya.minReloadGapMs,
+      });
+      tuyaGuardian.start();
+    }
+  } else if (config.health.enabled || config.tuya.guardianEnabled) {
+    logger.info('Daily health report / Tuya guardian enabled but Home Assistant is not configured — skipped');
   }
 
   // Gmail digest diario (LUI-TSK-0031 / LUI-TSK-0064). Off por defecto:
@@ -757,6 +788,7 @@ async function main() {
     dishwasherWatcher?.stop();
     weatherWatcher?.stop();
     dailyHealthReport?.stop();
+    tuyaGuardian?.stop();
     await downloadWatcher.stop();
     await telegramStop();
     await webStop();

@@ -14,7 +14,7 @@ function auto(id, state) {
 function sw(id, hoursAgo) {
   return { entity_id: id, state: 'off', last_changed: new Date(NOW.getTime() - hoursAgo * 3600000).toISOString(), attributes: {} };
 }
-const cover = { entity_id: 'cover.persiana_salon_cortina', state: 'open', last_changed: NOW.toISOString(), attributes: { current_position: 30 } };
+const cover = { entity_id: 'cover.persiana_salon_cortina', state: 'open', last_changed: NOW.toISOString(), last_updated: NOW.toISOString(), attributes: { current_position: 30 } };
 
 const CAPS = [
   { name: 'temperature', status: 'enabled' },
@@ -70,6 +70,14 @@ describe('collectHealth', () => {
     const r = collectHealth({ states, capabilities: [], config: CFG, now: NOW });
     assert.equal(r.hasWarning, true);
     assert.match(r.message, /⚠️ Persianas verano: 1\/2 activas/);
+  });
+
+  it('cover con last_updated viejo → aviso de Tuya congelado', () => {
+    const staleCover = { entity_id: 'cover.persiana_salon_cortina', state: 'open', last_changed: NOW.toISOString(), last_updated: new Date(NOW.getTime() - 30 * 3600000).toISOString(), attributes: { current_position: 30 } };
+    const states = [auto('automation.persiana_verano_1', 'on'), staleCover];
+    const r = collectHealth({ states, capabilities: [], config: { ...CFG, riegoValves: [], coverStaleHours: 12 }, now: NOW });
+    assert.equal(r.hasWarning, true);
+    assert.match(r.message, /Persiana: sin actualizar desde hace 30 h/);
   });
 
   it('excluye el sensor exterior y las lecturas imposibles (0°) de la media', () => {

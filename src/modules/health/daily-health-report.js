@@ -39,6 +39,7 @@ export function collectHealth({ states, capabilities = [], config = {}, now = ne
     persianaPrefix = 'automation.persiana_verano_',
     riegoValves = [],
     riegoStaleHours = 36,
+    coverStaleHours = 12,
     outdoorEntity = '',
     excludeRe = /exterior|outdoor|fuera|terraza|jard|calle|balc|nevera|frigo|congelador|fridge|freezer|cpu|bater|battery|coche|\bext\b/i,
     plausibleMin = 5,
@@ -68,11 +69,20 @@ export function collectHealth({ states, capabilities = [], config = {}, now = ne
   const pers = states.filter((s) => s.entity_id.startsWith(persianaPrefix));
   if (pers.length > 0) {
     const on = pers.filter((s) => s.state === 'on').length;
-    const pos = coverEntity ? byId.get(coverEntity)?.attributes?.current_position : null;
+    const cov = coverEntity ? byId.get(coverEntity) : null;
+    const pos = cov?.attributes?.current_position;
     const fisico = pos != null ? `${100 - pos}%` : '?';
     const allOn = on === pers.length;
     if (!allOn) hasWarning = true;
     lines.push(`${allOn ? '✅' : '⚠️'} Persianas verano: ${on}/${pers.length} activas · salón al ${fisico}`);
+    // Frescura del cover: si Tuya se cuelga, el last_updated deja de refrescarse.
+    if (cov) {
+      const hours = (now.getTime() - new Date(cov.last_updated).getTime()) / 3_600_000;
+      if (!Number.isFinite(hours) || hours > coverStaleHours) {
+        lines.push(`⚠️ Persiana: sin actualizar desde hace ${Math.round(hours)} h (¿integración Tuya congelada?).`);
+        hasWarning = true;
+      }
+    }
   }
 
   // Riego: detecta válvula que no actúa (last_changed viejo).
