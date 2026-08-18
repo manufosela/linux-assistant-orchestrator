@@ -36,7 +36,7 @@ const APT_HEALTH_DEDUP_TTL_MS = 24 * 60 * 60 * 1000;
  *   now?: () => number,
  * }} deps
  */
-export function registerWebRoutes({ registry, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, notificationService, prometheusClient, downloadClassifier, watchtowerWebhookToken, aptHealthWebhookToken, logger, now = Date.now }) {
+export function registerWebRoutes({ registry, llmService, statusService, rulesRepository, urlFetcher, webSearch, homeAssistant, notificationService, prometheusClient, downloadClassifier, watchtowerWebhookToken, aptHealthWebhookToken, downloadReportStore, logger, now = Date.now }) {
   registry.register('GET', '/api/status', async () => {
     const status = statusService.getStatus();
     return { status: 200, body: status };
@@ -342,6 +342,41 @@ export function registerWebRoutes({ registry, llmService, statusService, rulesRe
       const detail = error?.message ?? 'notify webhook error';
       logger.warn({ err: detail }, '/api/hooks/notify failed');
       return { status: 502, body: { error: 'Relay failed', detail } };
+    }
+  });
+
+  // POST /api/hooks/download-report — recibe el desglose de descargas movidas al
+  // NAS (notify-move-reports.sh) y lo ACUMULA en el store en vez de reenviarlo a
+  // Telegram al momento (LUI-TSK-0095): el parte diario lo incluye a las 07:30, así
+  // no llegan avisos de madrugada. Reutiliza el token de Watchtower.
+  registry.register('POST', '/api/hooks/download-report', async (req, body) => {
+    if (!watchtowerWebhookToken) {
+      return { status: 503, body: { error: 'download-report webhook disabled (set WATCHTOWER_WEBHOOK_TOKEN)' } };
+    }
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const token = url.searchParams.get('token') ?? req.headers['x-webhook-token'];
+    if (token !== watchtowerWebhookToken) {
+      logger.warn('download-report webhook rejected: bad or missing token');
+      return { status: 401, body: { error: 'unauthorized' } };
+    }
+    if (!downloadReportStore) {
+      return { status: 503, body: { error: 'download report store not configured' } };
+    }
+    const raw = typeof body === 'string'
+      ? body
+      : (body && typeof body === 'object' && typeof body.message === 'string' ? body.message : '');
+    const message = raw.trim();
+    if (!message) {
+      return { status: 400, body: { error: 'message required' } };
+    }
+    try {
+      await downloadReportStore.add(message);
+      logger.info('download-report stored');
+      return { status: 200, body: { ok: true } };
+    } catch (error) {
+      const detail = error?.message ?? 'download-report store error';
+      logger.warn({ err: detail }, '/api/hooks/download-report failed');
+      return { status: 502, body: { error: 'Store failed', detail } };
     }
   });
 

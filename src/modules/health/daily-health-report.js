@@ -33,7 +33,7 @@ const isNum = (s) => s != null && s !== 'unknown' && s !== 'unavailable' && Numb
  * }} input
  * @returns {{ message: string, hasWarning: boolean }}
  */
-export function collectHealth({ states, capabilities = [], config = {}, now = new Date(), tuyaOutages24h = null }) {
+export function collectHealth({ states, capabilities = [], config = {}, now = new Date(), tuyaOutages24h = null, downloadReports = [] }) {
   const {
     coverEntity = 'cover.persiana_salon_cortina',
     persianaPrefix = 'automation.persiana_verano_',
@@ -128,6 +128,13 @@ export function collectHealth({ states, capabilities = [], config = {}, now = ne
     lines.push(`✅ Temperatura: ${mean.toFixed(1)}° de media${outStr}`);
   }
 
+  // Descargas movidas al NAS en las últimas 24h (LUI-TSK-0095): desglose completo
+  // tal cual llega de move-tg-to-nas, en vez de avisar de madrugada.
+  if (Array.isArray(downloadReports) && downloadReports.length > 0) {
+    lines.push('📥 Descargas al NAS (24h):');
+    for (const report of downloadReports) lines.push(report);
+  }
+
   return { message: lines.join('\n'), hasWarning };
 }
 
@@ -138,6 +145,7 @@ export function collectHealth({ states, capabilities = [], config = {}, now = ne
  *   notificationService: import('../notifications/notification-service.js').NotificationService,
  *   fetchStates: () => Promise<Array<object>>,
  *   fetchTuyaOutages?: () => Promise<number|null>,
+ *   fetchDownloadReports?: () => Promise<string[]>,
  *   capabilities?: Array<{ name: string, status: string }>,
  *   config?: object,
  *   reportHour?: number,
@@ -151,6 +159,7 @@ export function createDailyHealthReport({
   notificationService,
   fetchStates,
   fetchTuyaOutages,
+  fetchDownloadReports,
   capabilities = [],
   config = {},
   reportHour = 7,
@@ -177,7 +186,15 @@ export function createDailyHealthReport({
         logger?.warn({ err: error?.message }, 'Daily health report: no se pudo contar las caídas de Tuya');
       }
     }
-    const { message, hasWarning } = collectHealth({ states, capabilities, config, now: nowFn(), tuyaOutages24h });
+    let downloadReports = [];
+    if (typeof fetchDownloadReports === 'function') {
+      try {
+        downloadReports = await fetchDownloadReports();
+      } catch (error) {
+        logger?.warn({ err: error?.message }, 'Daily health report: no se pudieron leer los reports de descargas');
+      }
+    }
+    const { message, hasWarning } = collectHealth({ states, capabilities, config, now: nowFn(), tuyaOutages24h, downloadReports });
     try {
       await notificationService.sendNotification({ text: message, level: hasWarning ? 'warn' : 'info' });
     } catch (error) {

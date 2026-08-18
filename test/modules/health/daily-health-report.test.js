@@ -110,6 +110,18 @@ describe('collectHealth', () => {
     const r = collectHealth({ states: [tempSensor('sensor.salon', 26)], config: { ...CFG, riegoValves: [] }, now: NOW });
     assert.doesNotMatch(r.message, /Tuya:/);
   });
+
+  it('incluye el desglose de descargas al NAS tal cual', () => {
+    const r = collectHealth({ states: [tempSensor('sensor.salon', 26)], config: { ...CFG, riegoValves: [] }, now: NOW, downloadReports: ['📥 3 pelis, 2 series', '📚 1 libro'] });
+    assert.match(r.message, /📥 Descargas al NAS \(24h\):/);
+    assert.match(r.message, /📥 3 pelis, 2 series/);
+    assert.match(r.message, /📚 1 libro/);
+  });
+
+  it('no muestra sección de descargas si no hubo (array vacío)', () => {
+    const r = collectHealth({ states: [tempSensor('sensor.salon', 26)], config: { ...CFG, riegoValves: [] }, now: NOW, downloadReports: [] });
+    assert.doesNotMatch(r.message, /Descargas al NAS/);
+  });
 });
 
 describe('createDailyHealthReport', () => {
@@ -173,5 +185,19 @@ describe('createDailyHealthReport', () => {
     await r.run();
     assert.equal(sent.length, 1);
     assert.doesNotMatch(sent[0].text, /Tuya:/);
+  });
+
+  it('incluye el desglose de descargas en el parte (fetchDownloadReports)', async () => {
+    const sent = [];
+    const r = createDailyHealthReport({
+      logger: noop, scheduler: sched,
+      notificationService: { async sendNotification(m) { sent.push(m); } },
+      fetchStates: async () => [tempSensor('sensor.salon', 26, 'temperature', 'Salón')],
+      fetchDownloadReports: async () => ['📥 3 pelis, 2 series'],
+      capabilities: CAPS, config: { ...CFG, riegoValves: [] }, nowFn: () => NOW,
+    });
+    await r.run();
+    assert.match(sent[0].text, /📥 Descargas al NAS \(24h\):/);
+    assert.match(sent[0].text, /📥 3 pelis, 2 series/);
   });
 });

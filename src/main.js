@@ -13,6 +13,7 @@ import { createLlmFileClassifier } from './modules/downloads/llm-file-classifier
 import { createDownloadClassifier } from './modules/downloads/download-classifier.js';
 import { createFileMover } from './modules/downloads/file-mover.js';
 import { createDownloadWatcher } from './modules/downloads/download-watcher.js';
+import { createDownloadReportStore } from './modules/downloads/download-report-store.js';
 import { createAssistantStatusService } from './modules/assistant/assistant-status-service.js';
 import { createTelegramBot } from './apps/telegram-bot/create-telegram-bot.js';
 import { createTelegramCommandRouter } from './apps/telegram-bot/telegram-command-router.js';
@@ -617,6 +618,11 @@ async function main() {
     logger.info('Weather watcher disabled (set WEATHER_WATCHER_ENABLED=true to enable)');
   }
 
+  // Store de reports de descargas al NAS (LUI-TSK-0095): el endpoint
+  // /api/hooks/download-report los acumula y el parte diario los incluye a las 07:30.
+  const downloadReportStore = createDownloadReportStore({ filePath: config.downloads.reportsPath, logger });
+  await downloadReportStore.load();
+
   // Salud/observabilidad de la casa: parte diario (LUI-TSK-0092) + guardián Tuya
   // (LUI-TSK-0093). Comparten fetchStates; requieren HA configurado.
   let dailyHealthReport = null;
@@ -663,6 +669,7 @@ async function main() {
         notificationService,
         fetchStates: haFetchStates,
         fetchTuyaOutages: haCountTuyaOutages,
+        fetchDownloadReports: async () => downloadReportStore.recent(),
         capabilities: moduleStatuses,
         reportHour: config.health.reportHour,
         reportMinute: config.health.reportMinute,
@@ -785,6 +792,7 @@ async function main() {
         notificationService,
         prometheusClient,
         downloadClassifier,
+        downloadReportStore,
         watchtowerWebhookToken: config.watchtower.webhookToken,
         aptHealthWebhookToken: config.aptHealth.webhookToken,
         logger,

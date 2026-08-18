@@ -154,6 +154,7 @@ export function loadConfig(envPath = '.env') {
     downloads: {
       watchPath: process.env.DOWNLOADS_PATH ?? '/tmp/downloads',
       rulesPath: process.env.DOWNLOAD_RULES_PATH ?? './config/download-rules.json',
+      reportsPath: process.env.DOWNLOAD_REPORTS_PATH ?? join(homedir(), '.config', 'luis', 'download-reports.json'),
       enableLlmClassification: process.env.ENABLE_LLM_FILE_CLASSIFICATION === 'true',
     },
 
