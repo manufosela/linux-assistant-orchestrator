@@ -6,8 +6,9 @@
  * comando con 200 pero el estado no cambia y el last_updated se congela). Este
  * guardián vigila periódicamente el last_updated de los dispositivos Tuya y, si
  * alguno lleva mudo más de `staleHours`, RECARGA la integración
- * (homeassistant.reload_config_entry) y avisa por Telegram. Rate-limit para no
- * entrar en bucle de recargas.
+ * (homeassistant.reload_config_entry). Rate-limit para no entrar en bucle de
+ * recargas. NO avisa por Telegram (LUI-TSK-0094): las caídas se resumen en el
+ * parte diario de salud para no despertar al usuario de madrugada.
  */
 
 /**
@@ -36,7 +37,6 @@ export function findStaleTuya(states, watchedEntities, staleHours, nowMs) {
  * @param {{
  *   logger?: import('pino').Logger,
  *   scheduler: import('../../infrastructure/scheduler/scheduler.js').Scheduler,
- *   notificationService: import('../notifications/notification-service.js').NotificationService,
  *   fetchStates: () => Promise<Array<object>>,
  *   reloadTuya: () => Promise<unknown>,
  *   watchedEntities?: string[],
@@ -49,7 +49,6 @@ export function findStaleTuya(states, watchedEntities, staleHours, nowMs) {
 export function createTuyaGuardian({
   logger,
   scheduler,
-  notificationService,
   fetchStates,
   reloadTuya,
   watchedEntities = [],
@@ -85,11 +84,9 @@ export function createTuyaGuardian({
     try {
       await reloadTuya();
       lastReloadMs = now;
-      const worst = Math.max(...stale.map((s) => (Number.isFinite(s.hours) ? s.hours : 0)));
-      await notificationService.sendNotification({
-        text: `🔧 La integración Tuya se había colgado (${stale.map((s) => s.id).join(', ')} sin responder ~${worst} h). He recargado Tuya automáticamente; la persiana y el riego deberían volver.`,
-        level: 'warn',
-      });
+      // No se notifica por Telegram (LUI-TSK-0094): el aviso individual llegaba de
+      // madrugada. El nº de caídas de Tuya se consolida en el parte diario de salud.
+      logger?.info({ stale }, 'Tuya guardian: integración recargada (sin aviso; se resume en el parte diario)');
     } catch (error) {
       logger?.error({ err: error?.message }, 'Tuya guardian: reload_config_entry falló');
     }
