@@ -16,7 +16,7 @@ BASE_DIR="${BASE_DIR:-/media/raid5}"
 REPORT_DIR="$BASE_DIR/.move-reports"
 # Endpoint genérico que reemite el texto tal cual (multilínea, con desglose).
 # NO usar /api/hooks/watchtower: ese aplana el mensaje a la primera línea.
-LUIS_URL="${WATCHTOWER_URL:-http://localhost:3030/api/hooks/notify}"
+LUIS_URL="${WATCHTOWER_URL:-http://localhost:3030/api/hooks/download-report}"
 ENV_FILE="${WATCHTOWER_ENV_FILE:-$HOME/luis/.env}"
 
 [[ -d "$REPORT_DIR" ]] || exit 0
