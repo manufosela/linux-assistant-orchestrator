@@ -631,12 +631,38 @@ async function main() {
       return res.json();
     };
 
+    // Cuenta cuántas veces se cayó Tuya en las últimas 24h (LUI-TSK-0094): del
+    // histórico de HA, transiciones de la persiana a 'unavailable'. El parte diario
+    // lo resume en vez de avisar de cada recarga por Telegram (que llegaba de noche).
+    const haCountTuyaOutages = async () => {
+      const end = new Date();
+      const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+      const url = `${config.homeAssistant.baseUrl}/api/history/period/${start.toISOString()}`
+        + `?end_time=${encodeURIComponent(end.toISOString())}`
+        + `&filter_entity_id=${encodeURIComponent(config.tuya.reloadEntity)}&minimal_response`;
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${config.homeAssistant.token}` },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) throw new Error(`HA history ${res.status}`);
+      const data = await res.json();
+      const series = Array.isArray(data) && Array.isArray(data[0]) ? data[0] : [];
+      let outages = 0;
+      let prev = null;
+      for (const point of series) {
+        if (point.state === 'unavailable' && prev !== 'unavailable') outages += 1;
+        prev = point.state;
+      }
+      return outages;
+    };
+
     if (config.health.enabled) {
       dailyHealthReport = createDailyHealthReport({
         logger,
         scheduler,
         notificationService,
         fetchStates: haFetchStates,
+        fetchTuyaOutages: haCountTuyaOutages,
         capabilities: moduleStatuses,
         reportHour: config.health.reportHour,
         reportMinute: config.health.reportMinute,
@@ -666,7 +692,6 @@ async function main() {
       tuyaGuardian = createTuyaGuardian({
         logger,
         scheduler,
-        notificationService,
         fetchStates: haFetchStates,
         reloadTuya,
         watchedEntities: config.tuya.watchedEntities,

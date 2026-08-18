@@ -41,14 +41,12 @@ describe('createTuyaGuardian.checkOnce', () => {
     });
   }
 
-  it('recarga Tuya y avisa cuando hay un dispositivo mudo', async () => {
+  it('recarga Tuya pero NO avisa por Telegram (el resumen va al parte diario)', async () => {
     const reloads = [], sent = [];
     const g = make({ states: [ent('cover.persiana', 20), ent('switch.valv1', 1)], reloads, sent });
     await g.checkOnce();
     assert.equal(reloads.length, 1);
-    assert.equal(sent.length, 1);
-    assert.match(sent[0].text, /Tuya se había colgado/);
-    assert.match(sent[0].text, /cover\.persiana/);
+    assert.equal(sent.length, 0);
   });
 
   it('NO recarga si todo está fresco', async () => {
@@ -65,7 +63,7 @@ describe('createTuyaGuardian.checkOnce', () => {
     await g.checkOnce(); // recarga
     await g.checkOnce(); // dentro del rate-limit → no recarga
     assert.equal(reloads.length, 1);
-    assert.equal(sent.length, 1);
+    assert.equal(sent.length, 0);
   });
 
   it('si fetchStates falla, no lanza ni recarga', async () => {

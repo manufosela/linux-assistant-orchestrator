@@ -89,6 +89,27 @@ describe('collectHealth', () => {
     const r = collectHealth({ states, capabilities: [], config: { ...CFG, riegoValves: [] }, now: NOW });
     assert.match(r.message, /Temperatura: 26\.0° de media/); // solo salón; 0° y ext fuera
   });
+
+  it('resume las caídas de Tuya en 24h (>0) sin marcar warning', () => {
+    const r = collectHealth({ states: [tempSensor('sensor.salon', 26)], config: { ...CFG, riegoValves: [] }, now: NOW, tuyaOutages24h: 3 });
+    assert.match(r.message, /🔧 Tuya: se cayó y se recuperó 3 veces en 24h/);
+    assert.equal(r.hasWarning, false); // se recupera solo, es informativo
+  });
+
+  it('usa singular con una sola caída de Tuya', () => {
+    const r = collectHealth({ states: [tempSensor('sensor.salon', 26)], config: { ...CFG, riegoValves: [] }, now: NOW, tuyaOutages24h: 1 });
+    assert.match(r.message, /se recuperó 1 vez en 24h/);
+  });
+
+  it('indica Tuya estable si 0 caídas', () => {
+    const r = collectHealth({ states: [tempSensor('sensor.salon', 26)], config: { ...CFG, riegoValves: [] }, now: NOW, tuyaOutages24h: 0 });
+    assert.match(r.message, /✅ Tuya: estable \(0 caídas en 24h\)/);
+  });
+
+  it('no muestra línea de Tuya si no hay dato (null)', () => {
+    const r = collectHealth({ states: [tempSensor('sensor.salon', 26)], config: { ...CFG, riegoValves: [] }, now: NOW });
+    assert.doesNotMatch(r.message, /Tuya:/);
+  });
 });
 
 describe('createDailyHealthReport', () => {
@@ -125,5 +146,32 @@ describe('createDailyHealthReport', () => {
 
   it('requiere fetchStates', () => {
     assert.throws(() => createDailyHealthReport({ scheduler: sched, notificationService: {} }), /fetchStates/);
+  });
+
+  it('incluye en el parte el nº de caídas de Tuya (fetchTuyaOutages)', async () => {
+    const sent = [];
+    const r = createDailyHealthReport({
+      logger: noop, scheduler: sched,
+      notificationService: { async sendNotification(m) { sent.push(m); } },
+      fetchStates: async () => [tempSensor('sensor.salon', 26, 'temperature', 'Salón')],
+      fetchTuyaOutages: async () => 2,
+      capabilities: CAPS, config: { ...CFG, riegoValves: [] }, nowFn: () => NOW,
+    });
+    await r.run();
+    assert.match(sent[0].text, /🔧 Tuya: se cayó y se recuperó 2 veces en 24h/);
+  });
+
+  it('si fetchTuyaOutages falla, el parte se envía igual (sin la línea de Tuya)', async () => {
+    const sent = [];
+    const r = createDailyHealthReport({
+      logger: noop, scheduler: sched,
+      notificationService: { async sendNotification(m) { sent.push(m); } },
+      fetchStates: async () => [tempSensor('sensor.salon', 26, 'temperature', 'Salón')],
+      fetchTuyaOutages: async () => { throw new Error('history down'); },
+      capabilities: CAPS, config: { ...CFG, riegoValves: [] }, nowFn: () => NOW,
+    });
+    await r.run();
+    assert.equal(sent.length, 1);
+    assert.doesNotMatch(sent[0].text, /Tuya:/);
   });
 });

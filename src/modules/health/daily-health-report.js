@@ -33,7 +33,7 @@ const isNum = (s) => s != null && s !== 'unknown' && s !== 'unavailable' && Numb
  * }} input
  * @returns {{ message: string, hasWarning: boolean }}
  */
-export function collectHealth({ states, capabilities = [], config = {}, now = new Date() }) {
+export function collectHealth({ states, capabilities = [], config = {}, now = new Date(), tuyaOutages24h = null }) {
   const {
     coverEntity = 'cover.persiana_salon_cortina',
     persianaPrefix = 'automation.persiana_verano_',
@@ -85,6 +85,17 @@ export function collectHealth({ states, capabilities = [], config = {}, now = ne
     }
   }
 
+  // Estabilidad de Tuya en las últimas 24h (LUI-TSK-0094): se resume aquí en vez
+  // de avisar de cada recarga por Telegram (que llegaba de madrugada).
+  if (tuyaOutages24h != null) {
+    if (tuyaOutages24h === 0) {
+      lines.push('✅ Tuya: estable (0 caídas en 24h)');
+    } else {
+      const veces = tuyaOutages24h === 1 ? 'vez' : 'veces';
+      lines.push(`🔧 Tuya: se cayó y se recuperó ${tuyaOutages24h} ${veces} en 24h (recuperación automática).`);
+    }
+  }
+
   // Riego: detecta válvula que no actúa (last_changed viejo).
   for (const v of riegoValves) {
     const sw = byId.get(v.entity);
@@ -126,6 +137,7 @@ export function collectHealth({ states, capabilities = [], config = {}, now = ne
  *   scheduler: import('../../infrastructure/scheduler/scheduler.js').Scheduler,
  *   notificationService: import('../notifications/notification-service.js').NotificationService,
  *   fetchStates: () => Promise<Array<object>>,
+ *   fetchTuyaOutages?: () => Promise<number|null>,
  *   capabilities?: Array<{ name: string, status: string }>,
  *   config?: object,
  *   reportHour?: number,
@@ -138,6 +150,7 @@ export function createDailyHealthReport({
   scheduler,
   notificationService,
   fetchStates,
+  fetchTuyaOutages,
   capabilities = [],
   config = {},
   reportHour = 7,
@@ -156,7 +169,15 @@ export function createDailyHealthReport({
       logger?.warn({ err: error?.message }, 'Daily health report: no se pudo leer Home Assistant');
       states = null; // collectHealth lo reporta como HA no responde
     }
-    const { message, hasWarning } = collectHealth({ states, capabilities, config, now: nowFn() });
+    let tuyaOutages24h = null;
+    if (typeof fetchTuyaOutages === 'function') {
+      try {
+        tuyaOutages24h = await fetchTuyaOutages();
+      } catch (error) {
+        logger?.warn({ err: error?.message }, 'Daily health report: no se pudo contar las caídas de Tuya');
+      }
+    }
+    const { message, hasWarning } = collectHealth({ states, capabilities, config, now: nowFn(), tuyaOutages24h });
     try {
       await notificationService.sendNotification({ text: message, level: hasWarning ? 'warn' : 'info' });
     } catch (error) {
