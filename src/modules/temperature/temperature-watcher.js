@@ -113,7 +113,8 @@ export function createTemperatureWatcher({
    */
   async function notify(text, level) {
     try {
-      await notificationService.sendNotification({ text, level });
+      // Solo la alerta de calor/frío es urgente; el alivio (fresco/templado) va al informe.
+      await notificationService.sendNotification({ text, level, urgent: level === 'warn' });
     } catch (error) {
       logger.error({ err: error?.message }, 'Temperature notification failed to dispatch');
     }

@@ -309,7 +309,8 @@ export function registerWebRoutes({ registry, llmService, statusService, rulesRe
   // Telegram (multilínea, sin reformatear). Para avisos ya compuestos por
   // scripts (p.ej. el resumen de move-tg-to-nas con su desglose por categoría).
   // A diferencia de /watchtower, NO aplana el texto a la primera línea. Reutiliza
-  // el token de Watchtower (?token= o X-Webhook-Token). Opcional: `level`.
+  // el token de Watchtower (?token= o X-Webhook-Token). Opcional: `level` y
+  // `urgent: true` (solo lo urgente llega a Telegram; el resto, al informe).
   registry.register('POST', '/api/hooks/notify', async (req, body) => {
     if (!watchtowerWebhookToken) {
       return { status: 503, body: { error: 'notify webhook disabled (set WATCHTOWER_WEBHOOK_TOKEN)' } };
@@ -335,8 +336,9 @@ export function registerWebRoutes({ registry, llmService, statusService, rulesRe
     // parse_mode HTML en el canal Telegram: escapamos < > & del texto plano.
     const safe = message.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
     try {
-      await notificationService.sendNotification({ text: safe, level });
-      logger.info({ level }, 'notify webhook relayed');
+      const urgent = body?.urgent === true;
+      await notificationService.sendNotification({ text: safe, level, urgent });
+      logger.info({ level, urgent }, 'notify webhook relayed');
       return { status: 200, body: { ok: true } };
     } catch (error) {
       const detail = error?.message ?? 'notify webhook error';
@@ -398,7 +400,8 @@ export function registerWebRoutes({ registry, llmService, statusService, rulesRe
     }
     try {
       const { text, level } = formatAlertmanagerNotification(body);
-      await notificationService.sendNotification({ text, level });
+      // Solo las alertas critical despiertan (LUI-TSK-0100); el resto va al informe.
+      await notificationService.sendNotification({ text, level, urgent: level === 'error' });
       logger.info({ level }, 'alertmanager notification relayed');
       return { status: 200, body: { ok: true } };
     } catch (error) {

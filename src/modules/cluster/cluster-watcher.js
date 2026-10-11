@@ -93,7 +93,8 @@ export function createClusterWatcher({
    */
   async function notify(text, level) {
     try {
-      await notificationService.sendNotification({ text, level });
+      // Caída = urgente; la recuperación va al informe.
+      await notificationService.sendNotification({ text, level, urgent: level === 'warn' });
     } catch (error) {
       logger.error({ err: error?.message }, 'Cluster notification failed to dispatch');
     }

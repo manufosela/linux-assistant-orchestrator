@@ -95,6 +95,7 @@ describe('createClusterWatcher', () => {
 
     assert.equal(notifications.sent.length, 1);
     assert.equal(notifications.sent[0].level, 'warn');
+    assert.equal(notifications.sent[0].urgent, true);
     // Mensaje sin la dirección (formato nuevo agrupado por digest)
     assert.match(notifications.sent[0].text, /Ollama en n3 no responde/);
     assert.equal(history.entries.length, 1);
@@ -113,6 +114,7 @@ describe('createClusterWatcher', () => {
 
     assert.equal(notifications.sent.length, 2);
     assert.equal(notifications.sent[1].level, 'success');
+    assert.equal(notifications.sent[1].urgent, false);
     assert.match(notifications.sent[1].text, /Ollama en n3 recuperado tras \d+/);
     assert.equal(history.entries.length, 2);
     assert.equal(history.entries[1].type, 'recovered');

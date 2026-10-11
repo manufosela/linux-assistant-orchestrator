@@ -89,6 +89,7 @@ describe('createTemperatureWatcher — verano', () => {
     assert.match(notifier.sent[0].text, /Hace calor en casa/);
     assert.match(notifier.sent[0].text, /Temperatura media: 30\.0º/);
     assert.equal(notifier.sent[0].level, 'warn');
+    assert.equal(notifier.sent[0].urgent, true);
   });
 
   it('avisa por HABITACIÓN ≥ 31 aunque la media sea baja', async () => {
@@ -223,6 +224,7 @@ describe('createTemperatureWatcher — alertas independientes (LUI-TSK-0089)', (
     assert.equal(notifier.sent.length, 1, 'avisa de fresco sin calor previo');
     assert.match(notifier.sent[0].text, /[Hh]a bajado/);
     assert.equal(notifier.sent[0].level, 'success');
+    assert.equal(notifier.sent[0].urgent, false);
   });
 
   it('calor y fresco son ciclos independientes: sube→calor, baja→fresco, sube→calor otra vez', async () => {

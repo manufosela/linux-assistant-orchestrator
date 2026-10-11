@@ -106,7 +106,7 @@ export function createWeatherWatcher({
 
   async function notify(text) {
     try {
-      await notificationService.sendNotification({ text, level: 'warn' });
+      await notificationService.sendNotification({ text, level: 'warn', urgent: true });
     } catch (error) {
       logger?.error({ err: error?.message }, 'Weather notification failed to dispatch');
     }
