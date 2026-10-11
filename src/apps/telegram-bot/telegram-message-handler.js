@@ -11,6 +11,7 @@ import { parseDriveIntent } from '../../modules/drive/drive-intent.js';
 import { extractLeadingUrl, isUrl } from '../../modules/inbox/url-capture.js';
 import { parseInboxIntent, parseInboxReadIntent } from '../../modules/inbox/inbox-intent.js';
 import { formatInboxResults } from '../../modules/inbox/inbox-formatter.js';
+import { isReportRequest, buildReportMessages } from '../../modules/notifications/notification-report.js';
 import { rename } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
@@ -53,7 +54,7 @@ const INBOX_CATEGORY_EMOJI = {
   revisar: '🤔',
 };
 
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, gmailLabels, gmailDigest, gmailDigestConfig, digestConfigStore, summaryStore, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, youtubeService, mediaTranscriber, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, gmailLabels, gmailDigest, gmailDigestConfig, digestConfigStore, summaryStore, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, youtubeService, mediaTranscriber, notificationLog, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -467,6 +468,32 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     const report = await prometheusClient.getDownReport();
     return formatDownReport(report).html;
   }
+
+  /**
+   * Envía el informe del día: todos los avisos registrados, también los que no
+   * salieron por Telegram por no ser urgentes (LUI-TSK-0100).
+   *
+   * @param {number|string} chatId
+   */
+  async function sendDailyReport(chatId) {
+    if (!notificationLog) {
+      await bot.sendMessage(chatId, '⚠️ El registro de avisos no está configurado.');
+      return;
+    }
+    for (const text of buildReportMessages(notificationLog.today())) {
+      try {
+        await bot.sendMessage(chatId, text, { parse_mode: 'HTML' });
+      } catch (error) {
+        // Un aviso con HTML inválido no debe tumbar el resto del informe.
+        logger.warn({ chatId, err: error.message }, '/informe chunk failed');
+        await bot.sendMessage(chatId, `❌ No pude enviar una parte del informe: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
+      }
+    }
+  }
+
+  router.register('/informe', async (message) => {
+    await sendDailyReport(message.chat.id);
+  });
 
   router.register('/caidos', async (message) => {
     const chatId = message.chat.id;
@@ -1113,6 +1140,7 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       '/search &lt;query&gt; — buscar en la web',
       '/cluster [historial] — estado del cluster (n2/n3/n4) o sus incidencias',
       '/caidos — ¿hay algún servicio caído? (vía Prometheus)',
+      '/informe — todos los avisos de hoy (solo los urgentes llegan solos). También vale escribir <code>informe</code>',
       '/ha &lt;texto&gt; — pedir algo a Home Assistant',
       '/anuncia &lt;destino&gt; &lt;texto&gt; — anuncio en Alexa (o sin destino para elegir)',
       '/correo [hoy|de &lt;persona&gt;] — correos no leídos de hoy o de un remitente',
@@ -1141,6 +1169,11 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
     const chatId = message.chat.id;
     const text = (message.text ?? '').trim();
     if (!text) return;
+
+    if (isReportRequest(text)) {
+      await sendDailyReport(chatId);
+      return;
+    }
 
     // Inbox URL capture (TSK-0052): if the message starts with http(s)://
     // and the inbox + urlCapture are wired, treat it as "save this article"
