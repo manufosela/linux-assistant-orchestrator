@@ -454,6 +454,7 @@ async function main() {
       inboxReader,
       youtubeService,
       mediaTranscriber,
+      notificationLog: notificationLogStore,
       router,
       logger,
     });
