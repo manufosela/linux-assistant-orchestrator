@@ -95,6 +95,12 @@ export function loadConfig(envPath = '.env') {
       notifyChatId: process.env.TELEGRAM_NOTIFY_CHAT_ID ?? '',
     },
 
+    notifications: {
+      // Registro de todos los avisos (LUI-TSK-0100): solo los urgentes van a
+      // Telegram; el resto se consulta con el comando "informe".
+      logPath: process.env.NOTIFICATION_LOG_PATH ?? join(homedir(), '.config', 'luis', 'notification-log.json'),
+    },
+
     watchtower: {
       // Shared secret for the POST /api/hooks/watchtower webhook.
       // Empty disables the endpoint (503).

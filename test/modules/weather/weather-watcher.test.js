@@ -160,6 +160,7 @@ describe('createWeatherWatcher.checkOnce', () => {
 
     assert.equal(notifier.sent.length, 1);
     assert.match(notifier.sent[0].text, /Lluvia probable/);
+    assert.equal(notifier.sent[0].urgent, true);
     assert.equal(announcer.calls.length, 1);
     assert.match(announcer.calls[0].message, /se prevé lluvia/i);
     // broadcast a toda la casa: sin target explícito

@@ -70,6 +70,7 @@ describe('POST /api/hooks/alertmanager', () => {
       assert.match(sent[0].text, /crítico/);
       assert.match(sent[0].text, /n2 no responde/);
       assert.equal(sent[0].level, 'error');
+      assert.equal(sent[0].urgent, true);
     } finally { await app.stop(); }
   });
 
@@ -85,6 +86,7 @@ describe('POST /api/hooks/alertmanager', () => {
       assert.equal(res.status, 200);
       assert.match(sent[0].text, /recuperada/i);
       assert.equal(sent[0].level, 'success');
+      assert.equal(sent[0].urgent, false);
     } finally { await app.stop(); }
   });
 
@@ -95,6 +97,7 @@ describe('POST /api/hooks/alertmanager', () => {
       const payload = { status: 'firing', alerts: [{ status: 'firing', labels: { alertname: 'HighTemp', severity: 'warning', instance: 'node-n3' }, annotations: { summary: 'temperatura alta' } }] };
       await post(`${app.baseUrl}/api/hooks/alertmanager?token=secret`, payload);
       assert.equal(sent[0].level, 'warn');
+      assert.equal(sent[0].urgent, false);
       assert.match(sent[0].text, /aviso/);
     } finally { await app.stop(); }
   });

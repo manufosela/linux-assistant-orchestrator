@@ -112,6 +112,22 @@ describe('POST /api/hooks/notify', () => {
       assert.equal(res.status, 200);
       assert.equal(sent.length, 1);
       assert.equal(sent[0].level, 'success');
+      assert.equal(sent[0].urgent, false);
+    } finally {
+      await app.stop();
+    }
+  });
+
+  it('urgent: true en el body → aviso urgente', async () => {
+    const sent = [];
+    const app = await start({
+      watchtowerWebhookToken: 'secret',
+      notificationService: { sendNotification: async (m) => sent.push(m) },
+    });
+    try {
+      const res = await post(`${app.baseUrl}/api/hooks/notify?token=secret`, { message: 'fuga de agua', urgent: true });
+      assert.equal(res.status, 200);
+      assert.equal(sent[0].urgent, true);
     } finally {
       await app.stop();
     }

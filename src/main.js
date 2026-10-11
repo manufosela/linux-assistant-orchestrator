@@ -27,6 +27,7 @@ import { createSmartHomeAssistantClient } from './modules/home-assistant/ha-smar
 import { createAlexaAnnouncer } from './modules/home-assistant/ha-alexa-announcer.js';
 import { createHouseAverageFilter } from './modules/home-assistant/sensor-filter.js';
 import { createNotificationService } from './modules/notifications/notification-service.js';
+import { createNotificationLogStore } from './modules/notifications/notification-log-store.js';
 import { createTelegramNotificationChannel } from './modules/notifications/telegram-notification-channel.js';
 import { buildClusterTargets } from './modules/cluster/cluster-targets.js';
 import { createClusterHealthChecker } from './modules/cluster/cluster-health-checker.js';
@@ -407,6 +408,10 @@ async function main() {
     logger,
   });
 
+  // Registro de avisos (LUI-TSK-0100): todo se guarda aquí; solo lo urgente va a Telegram.
+  const notificationLogStore = createNotificationLogStore({ filePath: config.notifications.logPath, logger });
+  await notificationLogStore.load();
+
   // Telegram bot
   let bot = null;
   let telegramStop = async () => {};
@@ -469,9 +474,11 @@ async function main() {
   }
 
   // Notifications: Telegram channel when the bot is up, otherwise a no-op sink.
+  // Everything is recorded in the log store; only urgent messages reach Telegram.
   const notificationService = createNotificationService(
     telegramNotificationChannel ? [telegramNotificationChannel] : [],
     logger,
+    { logStore: notificationLogStore },
   );
 
   // Cluster watcher — monitors the 3 nodes and alerts on Telegram on failure/recovery.
