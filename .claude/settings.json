@@ -18,6 +18,109 @@
             "command": "node .karajan/harness/pretooluse.mjs"
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .karajan/harness/pretooluse-sentinel.mjs"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .karajan/harness/pretooluse-sentinel.mjs"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .karajan/harness/pretooluse-rules.mjs"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .karajan/harness/posttooluse.mjs"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .karajan/harness/posttooluse.mjs"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*__update_card",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .karajan/harness/posttooluse.mjs"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*__kj_rag_query",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .karajan/harness/posttooluse.mjs"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .karajan/harness/stop.mjs"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .karajan/harness/sessionstart.mjs"
+          }
+        ]
+      },
+      {
+        "matcher": "resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .karajan/harness/sessionstart.mjs"
+          }
+        ]
+      },
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .karajan/harness/sessionstart.mjs"
+          }
+        ]
       }
     ]
   }

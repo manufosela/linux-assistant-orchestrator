@@ -1,6 +1,7 @@
 .env
 *.log
 .DS_Store
+.claude/*.lock
 .karajan/*
 # …except the v4 environment contract, which the whole team inherits:
 !.karajan/review-gate
@@ -10,7 +11,14 @@
 !.karajan/hooks/commit-msg
 !.karajan/hooks/pre-push
 !.karajan/hooks/post-merge
+!.karajan/hooks/prepare-commit-msg
 !.karajan/adrs/
+!.karajan/supervisor-provenance.json
+!.karajan/policy.yml
+!.karajan/policy-anchor.json
+!.karajan/supervisor-signers.json
+!.karajan/rules.yml
+!.karajan/security-level.json
 .reviews/
 node_modules/
 config/download-rules.json
@@ -28,3 +36,4 @@ docker-compose.override.yml
 # Deploy helper is environment-specific and kept local only (not published)
 /scripts/deploy.sh
 
+.karajan/identity.local.yml

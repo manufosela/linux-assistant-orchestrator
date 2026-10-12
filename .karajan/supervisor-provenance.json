@@ -1,0 +1,99 @@
+{
+  "kj_version": "4.49.2",
+  "generated_at": "2026-10-12T17:04:13.177Z",
+  "generation": {
+    "profile": "standard",
+    "cmds": {
+      "test": "npm test"
+    },
+    "baseBranch": "main",
+    "globalHooksDir": "$HOME/.git-hooks"
+  },
+  "who": {
+    "gh": "manufosela-tribbu",
+    "git": "1101670+manufosela@users.noreply.github.com",
+    "grade": "declarada"
+  },
+  "files": [
+    {
+      "file": ".karajan/harness/posttooluse.mjs",
+      "sha256": "732a2b07ade700ba347f2ff703f0ff45a863be6befbe3e003dc30c890bf6f9ac"
+    },
+    {
+      "file": ".karajan/harness/pretooluse-rules.mjs",
+      "sha256": "f1948a95ed80f94c58d709b589a8b1e1ae60d1f1eb35d75ca7d83839250cd9b8"
+    },
+    {
+      "file": ".karajan/harness/pretooluse-sentinel.mjs",
+      "sha256": "c35e722cf3a82f3f0e239f4563ad1765b7c12e9dd4cabdef4e0a334b51e67934"
+    },
+    {
+      "file": ".karajan/harness/pretooluse.mjs",
+      "sha256": "468f30932ead7dd9332707dc2b8dd6054f1a82b64e46203ae8cf56c96690771c"
+    },
+    {
+      "file": ".karajan/harness/sentinel-bash-write.mjs",
+      "sha256": "5a5d4beb3bf4e36d1bf0fe79b525c906990695e5be4c65b095a2d0e94602b342"
+    },
+    {
+      "file": ".karajan/harness/sentinel-discard.mjs",
+      "sha256": "d27cacf0900c9fc6e7990e456bea2caff6b4e553083ce8844f0dcf71758f9d9f"
+    },
+    {
+      "file": ".karajan/harness/sentinel-lib.mjs",
+      "sha256": "0b0f1e98e4114543148aba7cb4be19a7abe41b408fa937bc6ff4e0697ca12c9e"
+    },
+    {
+      "file": ".karajan/harness/sentinel-reminders.mjs",
+      "sha256": "8ff651803d925b0f73fda7103d27416b07bd067e91c2db6e7274a689d422e8ea"
+    },
+    {
+      "file": ".karajan/harness/sentinel-rules.mjs",
+      "sha256": "82d324f20ead19883a45a96f9dc0da08b1b1a969735afabb164235df39951d79"
+    },
+    {
+      "file": ".karajan/harness/sentinel-shell.mjs",
+      "sha256": "fe82826d7018d849abf6b4c1ef6bdd021ecae6a3d050e07ed31ba05f1871de96"
+    },
+    {
+      "file": ".karajan/harness/sessionstart.mjs",
+      "sha256": "2d119cac5c9b4432badf7d7c905371d351acccb9899b51a8aadb5c5c83a83472"
+    },
+    {
+      "file": ".karajan/harness/stop.mjs",
+      "sha256": "4c2d4f7c0e8650be562d04f03477e40243d28cf98246937f31f192e744f77011"
+    },
+    {
+      "file": ".karajan/hooks/commit-msg",
+      "sha256": "7be3ae11b0bcd1029d70009bc1a9e0649695b4db343f8c83654a4936bbd2953e"
+    },
+    {
+      "file": ".karajan/hooks/post-merge",
+      "sha256": "3debc2a7239bb758ecaad5db145ff2c139e4bd504abfeecd4405d7ebcc98ee58"
+    },
+    {
+      "file": ".karajan/hooks/pre-commit",
+      "sha256": "119573cf90ebf9f4b8369b8616fac87f2b5877d97452503b9d918ea186162c73"
+    },
+    {
+      "file": ".karajan/hooks/pre-push",
+      "sha256": "e9820683b6dcaf980cfbbd2b8f73895f2f0aee72c978a690f98a03462ed0d463"
+    },
+    {
+      "file": ".karajan/hooks/prepare-commit-msg",
+      "sha256": "4850712b985d9c2470fbaf55f84019ff739370ad3fd0d941aaefcbdebe6537f9"
+    }
+  ],
+  "signature": {
+    "cid": "26641eaaa199b61b1e93070498f79e72",
+    "nonce": "eb69b248a4d158f8ce001a0ee66aa2a9",
+    "project": "linux-assistant-orchestrator",
+    "filesHash": "bf56577502cae067b460ea1bc9d8e62210792967392ee3b5a3d839c85fe927cc",
+    "v": 2,
+    "kjVersion": "4.49.2",
+    "issuedMs": 1791824637435,
+    "expiresMs": 1791824697435,
+    "signer": "EgMc2b95g5nUh8e6LDCeLjv7G69cQaszUCIy+3aLpPQ=",
+    "signature": "u6M1sYIo4NVPXw1HTGOVGswVtwjtJWoHpfNG9rcjsnAu6UVY9sFHLOf8AaFh8OYbZ8FuCSEwGn7luI2+mdJeAA=="
+  }
+}
