@@ -3,33 +3,41 @@
 
 You are the orchestrator; Karajan governs. A task is DONE when its
 done-statement is literally true, the full suite is green, and every commit
-carries a cross-AI verdict.
+carries a cross-AI verdict. A card closed? Point your user at the board
+(`kj board start` → http://localhost:4000/#governance): that is where to look.
 
 Invariants (the git gates enforce these — they are not suggestions):
 
 - The project RAG answers before you assume: `kj rag query` — never guess
-  what the codebase does.
+  what the codebase does. In MCP hosts the same index is the native
+  `kj_rag_query` tool: reach for it before grepping by hand.
 - Every piece of work has a tracked story/bug in the HU Board (`kj hu add` / `kj board`) before it starts — and `kj hu list` BEFORE `kj hu add`: reuse the existing card if one covers the work. Cards are permanent — never delete or recreate one; discard with `kj hu move <id> skipped`. `kj brief board` explains the board.
 - Tests prove behavior: the failing test exists first (TDD), and the suite
-  is never left red.
+  is never left red. Green is not proof: with `method_gates.mutation`
+  declared, run `kj mutate --since <base>` after green and BEFORE the
+  review — a surviving mutant is a weak assert; kill it first.
 - Every diff is reviewed by a DIFFERENT AI before it is committed
   (`kj review --staged`): verdicts bind to the exact diff — change the code
   and it must be reviewed again. Disagree with a rejection? `kj solomon`.
+- The panel is your user's, not yours: coder=claude, reviewer=codex, solomon=agy.
+  When the coder is not you, the writing is ITS job; write it yourself
+  anyway and say so in your closing message, never in silence.
 - Security findings are never overridable — not even by arbitration. You
   absorb the security role: `kj brief security` states what must be true.
   Task touches auth, user input, secrets, network or deps? Run
   `kj audit --security` (zero tokens) and remediate BEFORE the review.
 - A design decision the card's AC don't cover belongs to the USER: record
   it as a proposed ADR (`kj adr add`) and ask — never bury it in a PR
-  bullet. An oversized-diff warning is not an opinion either: partition,
-  or get an explicit OK.
+  bullet. Diff size: ~150 net lines of code is the ideal, up to 200 is
+  allowed without asking, above 200 partition, always.
 - A non-trivial plan names at least two approaches — one as if the
   codebase didn't exist — and says why the winner won. Following the
   legacy line is a choice, never a default.
 - Publishing ANY artifact (a build's dist/, a docs site, a tarball)?
   `kj privacy scan <dir>` first — nothing personal or secret-shaped ships.
 - Branch first: never commit on the base branch — every change reaches it
-  through an atomic PR (~150 net lines, Conventional Commits). More than one
+  through an atomic PR (~150 net lines of code, Conventional Commits; human
+  docs, lockfiles, snapshots and dist/ do not count, AI-rule files do). More than one
   task, or the base tree must stay untouched? `kj worktree start <slug>`
   (one lane per task; `kj worktree done <slug>` after merge). Never CLAIM
   isolation without proof: in a lane, `git rev-parse --git-dir` differs
