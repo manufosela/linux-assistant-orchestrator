@@ -12,6 +12,8 @@ import { extractLeadingUrl, isUrl } from '../../modules/inbox/url-capture.js';
 import { parseInboxIntent, parseInboxReadIntent } from '../../modules/inbox/inbox-intent.js';
 import { formatInboxResults } from '../../modules/inbox/inbox-formatter.js';
 import { isReportRequest, buildReportMessages } from '../../modules/notifications/notification-report.js';
+import { ToolAgentLimitError } from '../../modules/agent/tool-agent.js';
+import { withCurrentDate } from '../../modules/agent/build-agent-tools.js';
 import { rename } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
@@ -20,9 +22,11 @@ const ANNOUNCE_CALLBACK_PREFIX = 'anuncia:';
 const ANNOUNCE_CANCEL_CHOICE = '_cancel';
 
 const SYSTEM_PROMPT =
-  'Eres luis, un asistente local privado en Telegram. Responde con precisión y brevedad. ' +
-  'El usuario puede darte contexto vía /fetch (URLs descargadas) y /search (resultados de búsqueda); ' +
-  'razona sobre ese contexto cuando contestes. Si no sabes algo, dilo.';
+  'Eres luis, un asistente local privado en Telegram. Responde en español, con precisión y brevedad. ' +
+  'Tienes herramientas (el tiempo en casa, buscar en internet...): úsalas por tu cuenta cuando la ' +
+  'pregunta necesite datos reales o actuales, sin pedir al usuario que use comandos. ' +
+  'El usuario también puede darte contexto vía /fetch (URLs descargadas) y /search (resultados de búsqueda). ' +
+  'Si no sabes algo y ninguna herramienta lo resuelve, dilo; nunca inventes datos.';
 
 /**
  * Creates the Telegram message handler that builds and registers all command handlers
@@ -36,6 +40,7 @@ const SYSTEM_PROMPT =
  * @param {import('../../modules/llm/llm-service.js').LlmService} deps.llmService
  * @param {import('../../modules/web/url-fetcher.js').UrlFetcher} [deps.urlFetcher]
  * @param {import('../../modules/web/web-search.js').WebSearchService} [deps.webSearch]
+ * @param {{ run: (messages: object[], options?: object) => Promise<{ text: string, toolsUsed: string[] }> }} [deps.toolAgent]
  * @param {import('../../modules/home-assistant/ha-client.js').HomeAssistantClient} [deps.homeAssistant]
  * @param {import('../../modules/cluster/cluster-status-service.js').ClusterStatusService} [deps.clusterStatus]
  * @param {import('../../modules/prometheus/prometheus-client.js').PrometheusClient} [deps.prometheusClient]
@@ -54,7 +59,7 @@ const INBOX_CATEGORY_EMOJI = {
   revisar: '🤔',
 };
 
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, gmailLabels, gmailDigest, gmailDigestConfig, digestConfigStore, summaryStore, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, youtubeService, mediaTranscriber, notificationLog, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, toolAgent, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, gmailLabels, gmailDigest, gmailDigestConfig, digestConfigStore, summaryStore, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, youtubeService, mediaTranscriber, notificationLog, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -75,6 +80,24 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
       conversationsByChat.set(chatId, conversation);
     }
     return conversation;
+  }
+
+  /**
+   * One chat turn through the tool agent, with today's date in context. The
+   * budget is generous because gemma4 spends tokens reasoning before answering.
+   *
+   * @param {object[]} messages
+   * @param {object} options
+   * @returns {Promise<string>}
+   */
+  async function runAgentTurn(messages, options) {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const { text, toolsUsed } = await toolAgent.run(withCurrentDate(messages, new Date(), timeZone), {
+      ...options,
+      maxTokens: 2048,
+    });
+    logger.info({ toolsUsed }, 'Telegram agent turn');
+    return text;
   }
 
   /**
@@ -1326,16 +1349,19 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
 
     try {
       await bot.sendChatAction(chatId, 'typing');
-      const reply = await llmService.chat(conversation.snapshot(), {
-        module: 'telegram',
-        operation: 'chat',
-        private: true,
-      });
+      const options = { module: 'telegram', operation: 'chat', private: true };
+      // Agente con herramientas (LUI-TSK-0111): el modelo decide si consulta el
+      // tiempo, internet… Sin agente, la llamada simple de siempre.
+      const reply = toolAgent
+        ? await runAgentTurn(conversation.snapshot(), options)
+        : await llmService.chat(conversation.snapshot(), options);
       conversation.appendAssistant(reply);
       await indicator.finish(reply || '(sin respuesta)');
     } catch (error) {
       logger.warn({ chatId, err: error.message }, 'Telegram chat turn failed');
-      await indicator.finish('❌ El LLM no respondió. Inténtalo de nuevo en un momento.');
+      await indicator.finish(error instanceof ToolAgentLimitError
+        ? '❌ No conseguí reunir los datos para contestarte (demasiadas consultas seguidas). Prueba a preguntarlo de otra forma.'
+        : '❌ El LLM no respondió. Inténtalo de nuevo en un momento.');
     }
   });
 }
