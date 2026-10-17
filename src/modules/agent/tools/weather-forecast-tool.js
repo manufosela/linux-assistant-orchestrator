@@ -25,10 +25,13 @@ function describeSky(code) {
  * Herramienta del agente: previsión del tiempo en casa (LUI-TSK-0106).
  * Las coordenadas vienen de la config (WEATHER_LAT/LON), nunca del modelo.
  *
- * @param {{ latitude: number|null, longitude: number|null, fetchFn?: typeof fetch }} deps
+ * Open-Meteo responde 503 «service is overloaded» a ratos (LUI-BUG-0015): los
+ * 5xx se reintentan `retries` veces antes de devolver el error al modelo.
+ *
+ * @param {{ latitude: number|null, longitude: number|null, fetchFn?: typeof fetch, retries?: number, retryDelayMs?: number }} deps
  * @returns {import('../tool-registry.js').AgentTool}
  */
-export function createWeatherForecastTool({ latitude, longitude, fetchFn = fetch }) {
+export function createWeatherForecastTool({ latitude, longitude, fetchFn = fetch, retries = 2, retryDelayMs = 1000 }) {
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
     throw new Error('get_weather_forecast necesita las coordenadas de casa (WEATHER_LAT/WEATHER_LON)');
   }
@@ -55,7 +58,11 @@ export function createWeatherForecastTool({ latitude, longitude, fetchFn = fetch
         forecast_days: String(forecastDays),
       }).toString();
 
-      const response = await fetchFn(url.toString());
+      let response = await fetchFn(url.toString());
+      for (let attempt = 0; attempt < retries && response?.status >= 500; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        response = await fetchFn(url.toString());
+      }
       if (!response?.ok) throw new Error(`Open-Meteo HTTP ${response?.status}`);
       const { current, daily } = await response.json();
 

@@ -50,10 +50,29 @@ describe('get_weather_forecast tool', () => {
     assert.deepEqual(days, ['1', '7']);
   });
 
-  it('throws a clear error when Open-Meteo fails', async () => {
-    const tool = createWeatherForecastTool({ latitude: 1, longitude: 1, fetchFn: async () => ({ ok: false, status: 503 }) });
+  it('throws a clear error when Open-Meteo keeps failing after the retries', async () => {
+    let calls = 0;
+    const fetchFn = async () => { calls += 1; return { ok: false, status: 503 }; };
+    const tool = createWeatherForecastTool({ latitude: 1, longitude: 1, fetchFn, retryDelayMs: 0 });
 
     await assert.rejects(tool.execute({}), /Open-Meteo HTTP 503/);
+    assert.equal(calls, 3);
+  });
+
+  it('retries a 5xx from an overloaded Open-Meteo and returns the forecast (LUI-BUG-0015)', async () => {
+    const replies = [{ ok: false, status: 503 }, { ok: true, json: async () => openMeteo }];
+    const tool = createWeatherForecastTool({ latitude: 1, longitude: 1, fetchFn: async () => replies.shift(), retryDelayMs: 0 });
+
+    assert.equal((await tool.execute({})).ahora.temperatura, 14.2);
+  });
+
+  it('does not retry a 4xx', async () => {
+    let calls = 0;
+    const fetchFn = async () => { calls += 1; return { ok: false, status: 400 }; };
+    const tool = createWeatherForecastTool({ latitude: 1, longitude: 1, fetchFn, retryDelayMs: 0 });
+
+    await assert.rejects(tool.execute({}), /Open-Meteo HTTP 400/);
+    assert.equal(calls, 1);
   });
 
   it('refuses to be built without coordinates', () => {
