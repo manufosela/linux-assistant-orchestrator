@@ -21,6 +21,9 @@ import { registerTelegramHandlers } from './apps/telegram-bot/telegram-message-h
 import { createWebApp } from './apps/web/create-web-app.js';
 import { createUrlFetcher } from './modules/web/url-fetcher.js';
 import { createWebSearchService } from './modules/web/web-search.js';
+import { createToolRegistry } from './modules/agent/tool-registry.js';
+import { createToolAgent } from './modules/agent/tool-agent.js';
+import { buildAgentTools } from './modules/agent/build-agent-tools.js';
 import { createHomeAssistantClient } from './modules/home-assistant/ha-client.js';
 import { createHomeAssistantStateCache } from './modules/home-assistant/ha-state-cache.js';
 import { createSmartHomeAssistantClient } from './modules/home-assistant/ha-smart-client.js';
@@ -428,6 +431,11 @@ async function main() {
 
     const router = createTelegramCommandRouter(allowedChatPolicy, logger);
 
+    // Agente con herramientas para el chat general (LUI-TSK-0111).
+    const agentTools = buildAgentTools({ weather: config.weather, webSearch, logger });
+    const toolAgent = createToolAgent({ llmService, registry: createToolRegistry(agentTools, { logger }) });
+    logger.info({ tools: agentTools.map((tool) => tool.name) }, 'Telegram tool agent ready');
+
     registerTelegramHandlers({
       bot,
       statusService,
@@ -435,6 +443,7 @@ async function main() {
       llmService,
       urlFetcher,
       webSearch,
+      toolAgent,
       homeAssistant,
       alexaAnnouncer,
       clusterStatus: clusterStatusService,
