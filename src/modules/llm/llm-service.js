@@ -63,9 +63,24 @@ export function createLlmService(provider, config, logger) {
    * @returns {Promise<string>}
    */
   async function chat(messages, options = {}) {
+    const { text } = await chatWithTools(messages, [], { operation: 'chat', ...options });
+    return text;
+  }
+
+  /**
+   * Chat call that offers `tools` (OpenAI function-calling format) to the model.
+   * Returns the reply text and the tool calls the model asked for (empty when it
+   * answered directly). Same privacy policy as `chat`.
+   *
+   * @param {Array<{ role: string, content: string|null }>} messages
+   * @param {Array<object>} tools
+   * @param {{ module?: string, operation?: string, private?: boolean, maxTokens?: number, temperature?: number, model?: string }} [options]
+   * @returns {Promise<{ text: string, toolCalls: Array<{ id: string, name: string, arguments: string }> }>}
+   */
+  async function chatWithTools(messages, tools, options = {}) {
     const {
       module: moduleName = 'unknown',
-      operation = 'chat',
+      operation = 'chat-tools',
       private: isPrivate = true,
       maxTokens,
       temperature,
@@ -84,6 +99,7 @@ export function createLlmService(provider, config, logger) {
 
     const response = await provider.chat({
       messages,
+      tools,
       maxTokens,
       temperature,
       model,
@@ -95,7 +111,7 @@ export function createLlmService(provider, config, logger) {
       },
     });
 
-    return response.text;
+    return { text: response.text, toolCalls: response.toolCalls ?? [] };
   }
 
   /**
@@ -169,7 +185,7 @@ export function createLlmService(provider, config, logger) {
     if (response?.text) yield response.text;
   }
 
-  return { generateText, chat, chatStream, checkHealth };
+  return { generateText, chat, chatWithTools, chatStream, checkHealth };
 }
 
 /**
@@ -192,6 +208,7 @@ export class PrivateDataCloudError extends Error {
  * @typedef {Object} LlmService
  * @property {(prompt: string, options?: object) => Promise<string>} generateText
  * @property {(messages: Array<{ role: string, content: string }>, options?: object) => Promise<string>} chat
+ * @property {(messages: Array<{ role: string, content: string|null }>, tools: Array<object>, options?: object) => Promise<{ text: string, toolCalls: Array<{ id: string, name: string, arguments: string }> }>} chatWithTools
  * @property {(messages: Array<{ role: string, content: string }>, options?: object) => AsyncGenerator<string, void, void>} chatStream
  * @property {() => Promise<import('../../../types/llm.js').LlmHealthStatus>} checkHealth
  */

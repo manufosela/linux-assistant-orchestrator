@@ -47,16 +47,17 @@ export function createLocalLlmProvider(config, logger) {
    * the model's next reply. Used for multi-turn conversations and slash commands.
    *
    * @param {{
-   *   messages: Array<{ role: 'system'|'user'|'assistant', content: string }>,
+   *   messages: Array<{ role: 'system'|'user'|'assistant'|'tool', content: string|null }>,
+   *   tools?: Array<object>,
    *   maxTokens?: number,
    *   temperature?: number,
    *   model?: string,
    *   metadata: import('../../../types/llm.js').LlmRequestMetadata,
    * }} request
-   * @returns {Promise<import('../../../types/llm.js').LlmPromptResponse>}
+   * @returns {Promise<import('../../../types/llm.js').LlmPromptResponse & { toolCalls: Array<{ id: string, name: string, arguments: string }> }>}
    */
   async function chat(request) {
-    const { messages, maxTokens = 1024, temperature = 0.7, metadata } = request;
+    const { messages, tools, maxTokens = 1024, temperature = 0.7, metadata } = request;
     const model = request.model ?? config.model;
 
     const promptLength = messages.reduce((acc, m) => acc + (m?.content?.length ?? 0), 0);
@@ -80,6 +81,7 @@ export function createLocalLlmProvider(config, logger) {
       max_tokens: maxTokens,
       temperature,
       stream: false,
+      ...(tools?.length ? { tools } : {}),
     };
 
     const response = /** @type {OpenAiCompatibleResponse} */ (
@@ -92,9 +94,15 @@ export function createLocalLlmProvider(config, logger) {
     }
 
     const text = choice.message?.content ?? '';
+    const toolCalls = (choice.message?.tool_calls ?? []).map((call) => ({
+      id: call.id,
+      name: call.function?.name,
+      arguments: call.function?.arguments ?? '',
+    }));
 
     return {
       text,
+      toolCalls,
       model: response.model ?? model,
       provider: 'local',
       usage: response.usage
@@ -225,6 +233,6 @@ async function safeReadText(response) {
 /**
  * @typedef {Object} OpenAiCompatibleResponse
  * @property {string} model
- * @property {Array<{ message: { content: string } }>} choices
+ * @property {Array<{ message: { content: string|null, tool_calls?: Array<{ id: string, function: { name: string, arguments: string } }> } }>} choices
  * @property {{ prompt_tokens: number, completion_tokens: number }} [usage]
  */
