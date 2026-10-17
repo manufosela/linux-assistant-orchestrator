@@ -55,6 +55,7 @@ Temperatura Cocina: 31.3º | Temperatura media: 29.7º
 | `TEMP_CHECK_INTERVAL_MS` | `900000` (15 min) | Cada cuánto comprueba |
 | `TEMP_SUMMER_MONTHS` | `5,6,7,8,9,10` | Meses de verano (1-12) |
 | `TEMP_WINTER_MONTHS` | `11,12,1,2,3,4` | Meses de invierno (1-12) |
+| `TEMP_SUMMER_MODE_ENTITY` | (vacío) | `input_boolean` de HA «modo verano». Si está, manda sobre los meses: encendido → avisos de verano; apagado → ningún aviso (en invierno el termostato regula solo). Ausente o `unavailable` → no avisa y deja un warning |
 | `TEMP_SUMMER_MEAN_MAX` | `30.0` | Umbral de media en verano |
 | `TEMP_SUMMER_ROOM_MAX` | `31.0` | Umbral por habitación en verano |
 | `TEMP_WINTER_MEAN_MIN` | `20.1` | Umbral de media en invierno |
