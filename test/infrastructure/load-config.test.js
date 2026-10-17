@@ -59,7 +59,7 @@ describe('loadConfig — cluster validation', () => {
 
 const TEMP_KEYS = [
   'CLUSTER_ENABLED', 'TEMP_WATCHER_ENABLED', 'HA_BASE_URL', 'HA_TOKEN',
-  'TEMP_SUMMER_MONTHS', 'TEMP_SUMMER_MEAN_MAX', 'TEMP_WINTER_MEAN_MIN',
+  'TEMP_SUMMER_MONTHS', 'TEMP_SUMMER_MEAN_MAX', 'TEMP_WINTER_MEAN_MIN', 'TEMP_SUMMER_MODE_ENTITY',
 ];
 
 describe('loadConfig — temperature validation', () => {
@@ -102,9 +102,15 @@ describe('loadConfig — temperature validation', () => {
     process.env.HA_TOKEN = 'token';
     process.env.TEMP_SUMMER_MONTHS = '6,7,8';
     process.env.TEMP_SUMMER_MEAN_MAX = '29.5';
+    process.env.TEMP_SUMMER_MODE_ENTITY = 'input_boolean.luis_modo_verano';
     const config = loadConfig(NO_ENV);
     assert.equal(config.temperature.enabled, true);
     assert.deepEqual(config.temperature.summerMonths, [6, 7, 8]);
     assert.equal(config.temperature.summerMeanThreshold, 29.5);
+    assert.equal(config.temperature.summerModeEntity, 'input_boolean.luis_modo_verano');
+  });
+
+  it('sin interruptor de modo verano por defecto (se usan los meses)', () => {
+    assert.equal(loadConfig(NO_ENV).temperature.summerModeEntity, '');
   });
 });

@@ -329,6 +329,9 @@ export function loadConfig(envPath = '.env') {
       // aviso y se excluye de la media/habitaciones interiores. Vacío = sin
       // exterior. Específico del despliegue: configúralo por env.
       outdoorEntity: process.env.TEMP_OUTDOOR_ENTITY ?? '',
+      // input_boolean de HA "modo verano" (LUI-TSK-0110): si está, manda sobre
+      // los meses (on = avisos de verano, off = ninguno). Vacío = por meses.
+      summerModeEntity: process.env.TEMP_SUMMER_MODE_ENTITY ?? '',
       // Franja silenciosa nocturna (HH:MM). Default 23:00-08:00.
       quietWindowStart: process.env.TEMP_QUIET_START ?? '23:00',
       quietWindowEnd: process.env.TEMP_QUIET_END ?? '08:00',

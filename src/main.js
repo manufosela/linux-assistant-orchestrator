@@ -517,6 +517,7 @@ async function main() {
       checkIntervalMs: config.temperature.checkIntervalMs,
       summerMonths: config.temperature.summerMonths,
       winterMonths: config.temperature.winterMonths,
+      summerModeEntity: config.temperature.summerModeEntity,
       summerMeanThreshold: config.temperature.summerMeanThreshold,
       summerRoomThreshold: config.temperature.summerRoomThreshold,
       winterMeanThreshold: config.temperature.winterMeanThreshold,

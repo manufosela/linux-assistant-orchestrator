@@ -385,6 +385,40 @@ describe('createTemperatureWatcher — exterior y humedad', () => {
   });
 });
 
+describe('createTemperatureWatcher — interruptor modo verano (LUI-TSK-0110)', () => {
+  const MODE = 'input_boolean.luis_modo_verano';
+  const OCTOBER_NOON = new Date(2026, 9, 17, 12, 0);
+  const mode = (state) => ({ entity_id: MODE, domain: 'input_boolean', state, area_id: '', area_name: '' });
+  const hot = [temp('sensor.salon', 32, 'Salón')];
+  const cold = [temp('sensor.salon', 18, 'Salón')];
+  const run = async (entities, now, logger = noopLogger) => {
+    const notifier = buildFakeNotifier();
+    const w = makeWatcher(buildFakeStateCache({ entities }), notifier, { now, summerModeEntity: MODE, logger });
+    await w.checkOnce();
+    return notifier.sent;
+  };
+
+  it('encendido: aplica las alertas de verano aunque sea invierno por meses', async () => {
+    const sent = await run([...hot, mode('on')], WINTER_NOON);
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].text, /Hace calor en casa/);
+  });
+
+  it('apagado: no avisa de nada, ni de fresco en octubre ni de frío en enero', async () => {
+    assert.equal((await run([temp('sensor.salon', 22, 'Salón'), mode('off')], OCTOBER_NOON)).length, 0);
+    assert.equal((await run([...cold, mode('off')], WINTER_NOON)).length, 0);
+  });
+
+  for (const [label, entities] of [['no existe', cold], ['está unavailable', [...cold, mode('unavailable')]]]) {
+    it(`si el interruptor ${label}: no avisa y deja un warning`, async () => {
+      const warnings = [];
+      const sent = await run(entities, WINTER_NOON, { ...noopLogger, warn: (obj, msg) => warnings.push({ obj, msg }) });
+      assert.equal(sent.length, 0);
+      assert.equal(warnings[0].obj.entity, MODE);
+    });
+  }
+});
+
 describe('createTemperatureWatcher — Alexa', () => {
   function buildFakeAnnouncer() {
     const calls = [];

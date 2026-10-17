@@ -29,6 +29,7 @@
  *   checkIntervalMs?: number,
  *   summerMonths?: number[],
  *   winterMonths?: number[],
+ *   summerModeEntity?: string,
  *   summerMeanThreshold?: number,
  *   summerRoomThreshold?: number,
  *   winterMeanThreshold?: number,
@@ -54,6 +55,10 @@ export function createTemperatureWatcher({
   checkIntervalMs = 15 * 60 * 1000,
   summerMonths = [5, 6, 7, 8, 9, 10],
   winterMonths = [11, 12, 1, 2, 3, 4],
+  // Interruptor "modo verano" de HA (LUI-TSK-0110). Si está configurado manda
+  // sobre los meses: encendido → alertas de verano; apagado → ninguna (en
+  // invierno el termostato regula la calefacción, no hay nada que poner a mano).
+  summerModeEntity = '',
   summerMeanThreshold = 30.0,
   summerRoomThreshold = 31.0,
   winterMeanThreshold = 20.1,
@@ -199,6 +204,16 @@ export function createTemperatureWatcher({
 
   /** @returns {'summer'|'winter'|null} */
   function currentSeason() {
+    if (summerModeEntity) {
+      const state = stateCache
+        .findEntities({ domain: summerModeEntity.split('.')[0] })
+        .find((entity) => entity.entity_id === summerModeEntity)?.state;
+      if (state === 'on') return 'summer';
+      if (state !== 'off') {
+        logger.warn({ entity: summerModeEntity, state: state ?? null }, 'Temperature watcher: interruptor de modo verano sin estado válido, no se avisa');
+      }
+      return null;
+    }
     const month = nowFn().getMonth() + 1;
     if (summerMonths.includes(month)) return 'summer';
     if (winterMonths.includes(month)) return 'winter';
@@ -318,7 +333,7 @@ export function createTemperatureWatcher({
     }
     const season = currentSeason();
     if (!season) {
-      logger.debug({ month: nowFn().getMonth() + 1 }, 'Temperature watcher: mes fuera de temporadas configuradas');
+      logger.debug({ month: nowFn().getMonth() + 1, summerModeEntity }, 'Temperature watcher: fuera de temporada de avisos');
       return;
     }
 
