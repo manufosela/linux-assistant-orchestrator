@@ -12,6 +12,7 @@ import { extractLeadingUrl, isUrl } from '../../modules/inbox/url-capture.js';
 import { parseInboxIntent, parseInboxReadIntent } from '../../modules/inbox/inbox-intent.js';
 import { formatInboxResults } from '../../modules/inbox/inbox-formatter.js';
 import { isReportRequest, buildReportMessages } from '../../modules/notifications/notification-report.js';
+import { buildHeatingReport } from '../../modules/heating/heating-report.js';
 import { ToolAgentLimitError } from '../../modules/agent/tool-agent.js';
 import { withCurrentDate } from '../../modules/agent/build-agent-tools.js';
 import { rename } from 'node:fs/promises';
@@ -44,6 +45,7 @@ const SYSTEM_PROMPT =
  * @param {import('../../modules/home-assistant/ha-client.js').HomeAssistantClient} [deps.homeAssistant]
  * @param {import('../../modules/cluster/cluster-status-service.js').ClusterStatusService} [deps.clusterStatus]
  * @param {import('../../modules/prometheus/prometheus-client.js').PrometheusClient} [deps.prometheusClient]
+ * @param {() => Promise<Array<{ entity_id: string, state: string }>>} [deps.fetchHaStates] - /api/states de HA (informe de calefacción)
  * @param {import('../../apps/telegram-bot/telegram-command-router.js').TelegramCommandRouter} deps.router
  * @param {import('pino').Logger} deps.logger
  * @returns {void}
@@ -59,7 +61,7 @@ const INBOX_CATEGORY_EMOJI = {
   revisar: '🤔',
 };
 
-export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, toolAgent, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, gmailLabels, gmailDigest, gmailDigestConfig, digestConfigStore, summaryStore, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, youtubeService, mediaTranscriber, notificationLog, router, logger }) {
+export function registerTelegramHandlers({ bot, statusService, rulesRepository, llmService, urlFetcher, webSearch, toolAgent, homeAssistant, alexaAnnouncer, clusterStatus, prometheusClient, gmailClient, gmailLabels, gmailDigest, gmailDigestConfig, digestConfigStore, summaryStore, calendarClient, driveClient, inboxStore, inboxProcessor, urlCapture, inboxQuery, inboxReader, youtubeService, mediaTranscriber, notificationLog, fetchHaStates, router, logger }) {
   /** @type {Map<number|string, import('../cli/conversation-manager.js').ConversationManager>} */
   const conversationsByChat = new Map();
   /** @type {Map<number|string, string>} */
@@ -511,6 +513,10 @@ export function registerTelegramHandlers({ bot, statusService, rulesRepository, 
         logger.warn({ chatId, err: error.message }, '/informe chunk failed');
         await bot.sendMessage(chatId, `❌ No pude enviar una parte del informe: ${escapeHtml(error.message)}`, { parse_mode: 'HTML' });
       }
+    }
+    // Calefacción del salón (LUI-TSK-0129), al final para no retrasar los avisos.
+    if (fetchHaStates) {
+      await bot.sendMessage(chatId, await buildHeatingReport(fetchHaStates), { parse_mode: 'HTML' });
     }
   }
 

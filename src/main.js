@@ -209,6 +209,17 @@ async function main() {
   let homeAssistant;
   let homeAssistantStateCache;
   let alexaAnnouncer;
+  // /api/states de HA: lo comparten el parte diario, el guardián Tuya y el informe.
+  const haFetchStates = config.homeAssistant.baseUrl && config.homeAssistant.token
+    ? async () => {
+      const res = await fetch(`${config.homeAssistant.baseUrl}/api/states`, {
+        headers: { Authorization: `Bearer ${config.homeAssistant.token}` },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) throw new Error(`HA ${res.status}`);
+      return res.json();
+    }
+    : undefined;
   if (config.homeAssistant.baseUrl && config.homeAssistant.token) {
     const baseClient = createHomeAssistantClient({
       baseUrl: config.homeAssistant.baseUrl,
@@ -464,6 +475,7 @@ async function main() {
       youtubeService,
       mediaTranscriber,
       notificationLog: notificationLogStore,
+      fetchHaStates: haFetchStates,
       router,
       logger,
     });
@@ -645,16 +657,7 @@ async function main() {
   // (LUI-TSK-0093). Comparten fetchStates; requieren HA configurado.
   let dailyHealthReport = null;
   let tuyaGuardian = null;
-  if (config.homeAssistant.baseUrl && config.homeAssistant.token) {
-    const haFetchStates = async () => {
-      const res = await fetch(`${config.homeAssistant.baseUrl}/api/states`, {
-        headers: { Authorization: `Bearer ${config.homeAssistant.token}` },
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!res.ok) throw new Error(`HA ${res.status}`);
-      return res.json();
-    };
-
+  if (haFetchStates) {
     // Cuenta cuántas veces se cayó Tuya en las últimas 24h (LUI-TSK-0094): del
     // histórico de HA, transiciones de la persiana a 'unavailable'. El parte diario
     // lo resume en vez de avisar de cada recarga por Telegram (que llegaba de noche).
