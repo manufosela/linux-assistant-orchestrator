@@ -49,6 +49,51 @@ export function formatHeatingReport(states) {
   return `${TITLE}\n${lines.join('\n')}`;
 }
 
+// Salas con válvula Netatmo; sus helpers están en HA (LUI-TSK-0130).
+const RADIATORS = [
+  { room: 'dormitorio_dani', label: 'Dormitorio Dani' },
+  { room: 'dormitorio_principal', label: 'Dormitorio Principal' },
+  { room: 'despacho', label: 'Despacho' },
+  { room: 'dormitorio_pabli', label: 'Dormitorio Pabli' },
+];
+const RADIATORS_TITLE = '♨️ <b>Radiadores</b>\nReparto estimado del gas por horas de válvula abierta:';
+const NO_DATA_STATES = new Set([undefined, 'unavailable', 'unknown']);
+
+/**
+ * Bloque "Radiadores" (LUI-TSK-0131): horas de calor de cada válvula y su
+ * parte de la semana. Es una estimación del gas: HA no mide consumo.
+ *
+ * @param {Array<{ entity_id: string, state: string }>} states - /api/states de HA
+ * @returns {string} HTML de Telegram
+ */
+export function formatRadiatorsReport(states) {
+  const byId = new Map(states.map((s) => [s.entity_id, s.state]));
+  const num = (id) => {
+    const value = Number.parseFloat(byId.get(id));
+    return Number.isFinite(value) ? value : null;
+  };
+
+  const rooms = RADIATORS.map(({ room, label }) => {
+    const now = byId.get(`binary_sensor.radiador_${room}_calentando`);
+    const today = num(`sensor.radiador_${room}_horas_hoy`);
+    const week = num(`sensor.radiador_${room}_horas_semana`);
+    const hasData = !NO_DATA_STATES.has(now) && today !== null && week !== null;
+    return { label, hasData, heatingNow: now === 'on', today, week };
+  });
+  const totalWeek = rooms.reduce((sum, r) => (r.hasData ? sum + r.week : sum), 0);
+
+  const lines = rooms.map(({ label, hasData, heatingNow, today, week }) => {
+    if (!hasData) return `${label}: sin datos (¿pila?)`;
+    if (totalWeek === 0) return `${label}: no ha pedido calor esta semana`;
+    const todayLabel = today === 0 ? 'hoy nada' : `hoy ${durationLabel(today)}`;
+    const share = Math.round((week / totalWeek) * 100);
+    const weekLabel = week === 0 ? 'semana nada' : `semana ${durationLabel(week)}`;
+    const nowLabel = heatingNow ? ' · calentando ahora' : '';
+    return `${label}: ${todayLabel} · ${weekLabel} (${share} %)${nowLabel}`;
+  });
+  return `${RADIATORS_TITLE}\n${lines.join('\n')}`;
+}
+
 /** @param {string} text */
 function escapeHtml(text) {
   return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
@@ -63,7 +108,8 @@ function escapeHtml(text) {
  */
 export async function buildHeatingReport(fetchStates) {
   try {
-    return formatHeatingReport(await fetchStates());
+    const states = await fetchStates();
+    return `${formatHeatingReport(states)}\n\n${formatRadiatorsReport(states)}`;
   } catch (error) {
     return `${TITLE}\n⚠️ No pude leer la calefacción: ${escapeHtml(String(error?.message ?? error))}`;
   }
