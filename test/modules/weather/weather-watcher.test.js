@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   createWeatherWatcher,
+  createRestDayCheck,
   buildTelegramMessage,
   buildVoiceMessage,
 } from '../../../src/modules/weather/weather-watcher.js';
@@ -289,6 +290,53 @@ describe('createWeatherWatcher.checkOnce', () => {
     });
     await watcher.checkOnce();
     assert.equal(notifier.sent.length, 0);
+  });
+});
+
+describe('fin de semana y festivos: voz callada hasta las 12 (LUI-TSK-0134)', () => {
+  const morningNow = () => new Date(2026, 7, 2, 10, 0, 0);
+  const rain = (now) => makeData(now(), [{ deltaH: 1, probability: 90 }]);
+
+  async function run({ nowFn, isRestDay }) {
+    const notifier = buildFakeNotifier();
+    const announcer = buildFakeAnnouncer();
+    const watcher = makeWatcher({
+      fetchFn: fetchReturning(rain(nowFn)), notifier, announcer, store: buildMemoryStore(), nowFn, extra: { isRestDay },
+    });
+    await watcher.checkOnce();
+    return { telegram: notifier.sent.length, voice: announcer.calls.length };
+  }
+
+  it('día de descanso antes de las 12: solo Telegram', async () => {
+    assert.deepEqual(await run({ nowFn: morningNow, isRestDay: async () => true }), { telegram: 1, voice: 0 });
+  });
+
+  it('día de descanso a partir de las 12: también voz', async () => {
+    assert.deepEqual(await run({ nowFn: dayNow, isRestDay: async () => true }), { telegram: 1, voice: 1 });
+  });
+
+  it('laborable por la mañana: voz como siempre', async () => {
+    assert.deepEqual(await run({ nowFn: morningNow, isRestDay: async () => false }), { telegram: 1, voice: 1 });
+  });
+
+  it('si no se sabe si es festivo, calla la voz pero llega Telegram', async () => {
+    const isRestDay = async () => { throw new Error('HA 503'); };
+    assert.deepEqual(await run({ nowFn: morningNow, isRestDay }), { telegram: 1, voice: 0 });
+  });
+});
+
+describe('createRestDayCheck', () => {
+  const ENTITY = 'binary_sensor.workday_sensor_es_md';
+  const check = (state) => createRestDayCheck(async () => [{ entity_id: ENTITY, state }], ENTITY);
+
+  it('sensor laborable off = día de descanso; on = laborable', async () => {
+    assert.equal(await check('off')(), true);
+    assert.equal(await check('on')(), false);
+  });
+
+  it('sin dato del sensor lanza un error claro', async () => {
+    await assert.rejects(check('unavailable')(), /workday_sensor_es_md/);
+    await assert.rejects(createRestDayCheck(async () => [], ENTITY)(), /workday_sensor_es_md/);
   });
 });
 

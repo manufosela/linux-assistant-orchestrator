@@ -43,7 +43,7 @@ import { createBatteryTracker } from './modules/battery/battery-tracker.js';
 import { createBatteryHistoryStore } from './modules/battery/battery-history-store.js';
 import { createDishwasherWatcher } from './modules/dishwasher/dishwasher-watcher.js';
 import { createDishwasherHistoryStore } from './modules/dishwasher/dishwasher-history-store.js';
-import { createWeatherWatcher } from './modules/weather/weather-watcher.js';
+import { createWeatherWatcher, createRestDayCheck } from './modules/weather/weather-watcher.js';
 import { createWeatherStore } from './modules/weather/weather-store.js';
 import { createDailyHealthReport } from './modules/health/daily-health-report.js';
 import { createTuyaGuardian } from './modules/health/tuya-guardian.js';
@@ -642,6 +642,8 @@ async function main() {
       alexaTarget: config.weather.alexaTarget,
       alexaQuietStart: config.weather.alexaQuietStart,
       alexaQuietEnd: config.weather.alexaQuietEnd,
+      isRestDay: haFetchStates ? createRestDayCheck(haFetchStates, config.weather.workdayEntity) : null,
+      restDayQuietUntil: config.weather.alexaRestDayQuietUntil,
     });
     weatherWatcher.start();
   } else {
