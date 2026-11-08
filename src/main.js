@@ -451,6 +451,7 @@ async function main() {
       fetchHaStates: haFetchStates,
       haClient: haServiceClient,
       clusterStatus: clusterStatusService,
+      notificationLog: notificationLogStore,
       logger,
     });
     const toolAgent = createToolAgent({ llmService, registry: createToolRegistry(agentTools, { logger }) });

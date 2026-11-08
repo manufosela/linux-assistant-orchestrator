@@ -43,6 +43,17 @@ describe('buildAgentTools', () => {
     assert.ok(tools.some((tool) => tool.name === 'get_nodes_status'));
   });
 
+  it('registers the daily report tool when the notification log exists', () => {
+    const tools = buildAgentTools({
+      weather: { latitude: 40, longitude: -3 },
+      webSearch,
+      notificationLog: { today: () => [] },
+      logger: silent,
+    });
+
+    assert.ok(tools.some((tool) => tool.name === 'get_daily_report'));
+  });
+
   it('skips the tools whose service is not configured and logs why', () => {
     const warnings = [];
     const logger = { ...silent, warn: (obj) => warnings.push(obj) };
@@ -51,7 +62,7 @@ describe('buildAgentTools', () => {
 
     assert.deepEqual(tools, []);
     assert.deepEqual(warnings.map((w) => w.tool), [
-      'get_weather_forecast', 'web_search', 'get_home_state', 'control_home_device', 'get_nodes_status',
+      'get_weather_forecast', 'web_search', 'get_home_state', 'control_home_device', 'get_nodes_status', 'get_daily_report',
     ]);
   });
 });
