@@ -67,6 +67,13 @@ describe('get_home_state tool', () => {
     assert.deepEqual(alone.entidades.map((e) => e.id), ['climate.salon']);
   });
 
+  it('looks in every type when the requested one has nothing, and says so', async () => {
+    const result = await toolWith(STATES).execute({ domain: 'switch', query: 'esquina' });
+
+    assert.deepEqual(result.entidades.map((e) => e.id), ['light.esquina']);
+    assert.match(result.aviso, /switch.*otros tipos/);
+  });
+
   it('combines query and type', async () => {
     const result = await toolWith(STATES).execute({ query: 'salón', domain: 'sensor' });
 
