@@ -1,5 +1,6 @@
 import { createWeatherForecastTool } from './tools/weather-forecast-tool.js';
 import { createWebSearchTool } from './tools/web-search-tool.js';
+import { createHomeStateTool } from './tools/home-state-tool.js';
 
 /**
  * Builds the tools the Telegram agent may use from the services LUIS has
@@ -9,11 +10,12 @@ import { createWebSearchTool } from './tools/web-search-tool.js';
  * @param {{
  *   weather: { latitude: number|null, longitude: number|null },
  *   webSearch?: Pick<import('../web/web-search.js').WebSearchService, 'search'>,
+ *   fetchHaStates?: () => Promise<Array<{ entity_id: string, state: string, attributes?: object }>>,
  *   logger: import('pino').Logger,
  * }} deps
  * @returns {import('./tool-registry.js').AgentTool[]}
  */
-export function buildAgentTools({ weather, webSearch, logger }) {
+export function buildAgentTools({ weather, webSearch, fetchHaStates, logger }) {
   const tools = [];
 
   if (Number.isFinite(weather.latitude) && Number.isFinite(weather.longitude)) {
@@ -26,6 +28,12 @@ export function buildAgentTools({ weather, webSearch, logger }) {
     tools.push(createWebSearchTool({ webSearch }));
   } else {
     logger.warn({ tool: 'web_search' }, 'Agent tool not registered: web search (SearXNG) not configured');
+  }
+
+  if (fetchHaStates) {
+    tools.push(createHomeStateTool({ fetchStates: fetchHaStates }));
+  } else {
+    logger.warn({ tool: 'get_home_state' }, 'Agent tool not registered: Home Assistant not configured');
   }
 
   return tools;
