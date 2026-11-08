@@ -21,7 +21,16 @@ const USEFUL_ATTRIBUTES = [
 /** Palabras de enlace que no forman parte de ningún nombre ("radiador del salón"). */
 const STOP_WORDS = new Set(['de', 'del', 'el', 'la', 'los', 'las', 'en', 'y']);
 
-const STATE_LABELS ={ unavailable: 'no disponible (sin conexión)', unknown: 'sin dato' };
+/**
+ * Palabras que nombran el TIPO de aparato y no aparecen en su nombre: el modelo
+ * busca "calefacción" y ningún termostato se llama así. Se quitan de la búsqueda
+ * y, si no se indicó tipo, lo fijan.
+ */
+const DOMAIN_WORDS = new Map([
+  ['calefaccion', 'climate'], ['termostato', 'climate'], ['termostatos', 'climate'], ['climatizacion', 'climate'],
+]);
+
+const STATE_LABELS = { unavailable: 'no disponible (sin conexión)', unknown: 'sin dato' };
 
 /**
  * Herramienta del agente: estado actual de la casa en Home Assistant
@@ -46,8 +55,14 @@ export function createHomeStateTool({ fetchStates, maxResults = 40 }) {
       },
       required: [],
     },
-    async execute({ query, domain }) {
-      const words = normaliseAreaName(query).split(' ').filter((word) => word && !STOP_WORDS.has(word));
+    async execute({ query, domain: requestedDomain }) {
+      let domain = requestedDomain;
+      const words = [];
+      for (const word of normaliseAreaName(query).split(' ')) {
+        if (!word || STOP_WORDS.has(word)) continue;
+        if (DOMAIN_WORDS.has(word)) domain ??= DOMAIN_WORDS.get(word);
+        else words.push(word);
+      }
       if (words.length === 0 && !domain) {
         throw new Error('Indica query o domain: no se lista la casa entera');
       }

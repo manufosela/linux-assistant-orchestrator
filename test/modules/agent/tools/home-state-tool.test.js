@@ -59,6 +59,14 @@ describe('get_home_state tool', () => {
     ]);
   });
 
+  it('treats "calefacción" or "termostato" as the heating type, not as a word of the name', async () => {
+    const withDomain = await toolWith(STATES).execute({ domain: 'climate', query: 'calefaccion' });
+    const alone = await toolWith(STATES).execute({ query: 'termostato del salón' });
+
+    assert.deepEqual(withDomain.entidades.map((e) => e.id), ['climate.salon', 'climate.despacho']);
+    assert.deepEqual(alone.entidades.map((e) => e.id), ['climate.salon']);
+  });
+
   it('combines query and type', async () => {
     const result = await toolWith(STATES).execute({ query: 'salón', domain: 'sensor' });
 
