@@ -126,6 +126,18 @@ describe('evaluateForecast', () => {
     }));
     assert.equal(evaluateForecast(entries, opts).severity, null);
   });
+
+  it('cuenta una franja ya empezada que aún no ha terminado (endMs)', () => {
+    const start = now.getTime() - 30 * 60000;
+    const entries = [{ epochMs: start, endMs: start + 3600000, hourLabel: '13:30', probability: 90 }];
+    assert.equal(evaluateForecast(entries, opts).severity, 'rain');
+  });
+
+  it('ignora una franja ya terminada aunque traiga endMs', () => {
+    const start = now.getTime() - 2 * 3600000;
+    const entries = [{ epochMs: start, endMs: start + 3600000, hourLabel: '12:00', probability: 90 }];
+    assert.equal(evaluateForecast(entries, opts).severity, null);
+  });
 });
 
 // now diurno (local 14:00) → fuera de la franja nocturna de voz (22-08).
@@ -148,12 +160,50 @@ function makeWatcher({ fetchFn, notifier, announcer, store, nowFn, extra = {} })
   });
 }
 
+describe('aviso una hora antes (LUI-TSK-0133)', () => {
+  // Open-Meteo da en la franja de las HH:00 el dato de la hora anterior.
+  const labelAt = (ms) => new Date(ms).toISOString().slice(11, 16);
+
+  it('no avisa si la lluvia empieza dentro de más de una hora', async () => {
+    const notifier = buildFakeNotifier();
+    const data = makeData(dayNow(), [{ deltaH: 3, probability: 90 }]); // lluvia de +2h a +3h
+    const watcher = makeWatcher({ fetchFn: fetchReturning(data), notifier, store: buildMemoryStore(), nowFn: dayNow });
+    await watcher.checkOnce();
+    assert.equal(notifier.sent.length, 0);
+  });
+
+  it('avisa cuando falta una hora y da la hora a la que empieza', async () => {
+    const notifier = buildFakeNotifier();
+    const data = makeData(dayNow(), [{ deltaH: 2, probability: 90 }]); // lluvia de +1h a +2h
+    const watcher = makeWatcher({ fetchFn: fetchReturning(data), notifier, store: buildMemoryStore(), nowFn: dayNow });
+    await watcher.checkOnce();
+    assert.equal(notifier.sent.length, 1);
+    assert.match(notifier.sent[0].text, new RegExp(`hacia las ${labelAt(dayNow().getTime() + 3600000)}`));
+  });
+
+  it('avisa también de una lluvia ya empezada que no se había avisado', async () => {
+    const notifier = buildFakeNotifier();
+    const data = makeData(dayNow(), [{ deltaH: 0.5, probability: 90 }]); // de -30 min a +30 min
+    const watcher = makeWatcher({ fetchFn: fetchReturning(data), notifier, store: buildMemoryStore(), nowFn: dayNow });
+    await watcher.checkOnce();
+    assert.equal(notifier.sent.length, 1);
+  });
+
+  it('sondea cada 15 minutos por defecto', () => {
+    let interval = null;
+    const scheduler = { ...buildFakeScheduler(), schedule(_fn, ms) { interval = ms; return { stop() {} }; } };
+    const watcher = makeWatcher({ fetchFn: fetchReturning({}), notifier: buildFakeNotifier(), store: buildMemoryStore(), nowFn: dayNow, extra: { scheduler } });
+    watcher.start();
+    assert.equal(interval, 15 * 60 * 1000);
+  });
+});
+
 describe('createWeatherWatcher.checkOnce', () => {
   it('avisa por Telegram y Alexa cuando se prevé lluvia', async () => {
     const notifier = buildFakeNotifier();
     const announcer = buildFakeAnnouncer();
     const store = buildMemoryStore();
-    const data = makeData(dayNow(), [{ deltaH: 3, probability: 70 }]);
+    const data = makeData(dayNow(), [{ deltaH: 2, probability: 70 }]);
     const watcher = makeWatcher({ fetchFn: fetchReturning(data), notifier, announcer, store, nowFn: dayNow });
 
     await watcher.checkOnce();
@@ -172,7 +222,7 @@ describe('createWeatherWatcher.checkOnce', () => {
     const notifier = buildFakeNotifier();
     const announcer = buildFakeAnnouncer();
     const store = buildMemoryStore();
-    const data = makeData(dayNow(), [{ deltaH: 3, probability: 70 }]);
+    const data = makeData(dayNow(), [{ deltaH: 2, probability: 70 }]);
     const watcher = makeWatcher({ fetchFn: fetchReturning(data), notifier, announcer, store, nowFn: dayNow });
 
     await watcher.checkOnce();
@@ -185,7 +235,7 @@ describe('createWeatherWatcher.checkOnce', () => {
   it('re-avisa si el episodio escala de lluvia a tormenta', async () => {
     const notifier = buildFakeNotifier();
     const store = buildMemoryStore();
-    const rain = makeData(dayNow(), [{ deltaH: 3, probability: 70 }]);
+    const rain = makeData(dayNow(), [{ deltaH: 2, probability: 70 }]);
     const storm = makeData(dayNow(), [{ deltaH: 2, weathercode: 95 }]);
     let data = rain;
     const watcher = makeWatcher({ fetchFn: async () => ({ ok: true, async json() { return data; } }), notifier, store, nowFn: dayNow });
@@ -202,7 +252,7 @@ describe('createWeatherWatcher.checkOnce', () => {
   it('al despejar reinicia el estado y un nuevo episodio vuelve a avisar', async () => {
     const notifier = buildFakeNotifier();
     const store = buildMemoryStore();
-    const rain = makeData(dayNow(), [{ deltaH: 3, probability: 70 }]);
+    const rain = makeData(dayNow(), [{ deltaH: 2, probability: 70 }]);
     const clear = makeData(dayNow(), [{ deltaH: 3, probability: 0 }]);
     let data = rain;
     const watcher = makeWatcher({ fetchFn: async () => ({ ok: true, async json() { return data; } }), notifier, store, nowFn: dayNow });
