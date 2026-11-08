@@ -28,6 +28,24 @@ const WEB_CREDENTIALS_JSON = JSON.stringify({
 
 const INVALID_CREDENTIALS_JSON = JSON.stringify({ installed: { client_id: 'x' } });
 
+/**
+ * Logger que avisa cuando google-auth termina de guardar los tokens renovados.
+ * El listener `tokens` es async: esperar a su log, y no un tiempo fijo, evita
+ * que el test falle con la máquina cargada (LUI-BUG-0016).
+ */
+function loggerAwaitingPersist() {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const logger = {
+    info: (msg) => {
+      if (msg === 'Google OAuth2 tokens refreshed and persisted') resolve();
+    },
+    warn: (data, msg) => reject(new Error(`${msg}: ${data?.err}`)),
+    error: () => {},
+    debug: () => {},
+  };
+  return { logger, persistDone: promise };
+}
+
 describe('createGoogleAuth', () => {
   /** @type {string} */
   let tmpDir;
@@ -131,23 +149,13 @@ describe('createGoogleAuth', () => {
       access_token: 'at-old',
     }));
 
-    /** @type {string[]} */
-    const logs = [];
-    const logger = {
-      info: (...args) => logs.push(`info:${JSON.stringify(args)}`),
-      warn: () => {},
-      error: () => {},
-      debug: () => {},
-    };
-
+    const { logger, persistDone } = loggerAwaitingPersist();
     const auth = createGoogleAuth({ credentialsPath: credPath, tokensPath, logger });
     const client = await auth.getClient();
 
     // Disparamos manualmente el evento como haría la librería al refrescar
     client.emit('tokens', { access_token: 'at-new', expiry_date: Date.now() + 60_000 });
-
-    // El handler es async; esperamos un microtask para que persista
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await persistDone;
 
     const persisted = JSON.parse(await readFile(tokensPath, 'utf8'));
     assert.equal(persisted.access_token, 'at-new', 'nuevo access_token persistido');
@@ -156,7 +164,8 @@ describe('createGoogleAuth', () => {
 
   it('saves tokens with 600 permissions when possible (no crash on weird filesystems)', async () => {
     await writeFile(credPath, VALID_CREDENTIALS_JSON);
-    const auth = createGoogleAuth({ credentialsPath: credPath, tokensPath });
+    const { logger, persistDone } = loggerAwaitingPersist();
+    const auth = createGoogleAuth({ credentialsPath: credPath, tokensPath, logger });
 
     // Simulamos el lado de exchangeCode sin llamar a Google: escribimos directamente a través
     // del exchangeCode mediante un mock no-op. Lo más práctico: comprobar el flujo de saveTokens
@@ -168,7 +177,7 @@ describe('createGoogleAuth', () => {
     // Disparar rotación que ejerza saveTokens(merged):
     const client = await auth.getClient();
     client.emit('tokens', { access_token: 'at-rotated' });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await persistDone;
 
     const after = await stat(tokensPath);
     // El modo puede no ser 0o600 exacto (umask, FS), pero al menos el fichero existe y se reescribió
