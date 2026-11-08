@@ -6,8 +6,12 @@
  * lluvia o tormenta en las próximas horas. Pensado para la ropa tendida.
  *
  * Comportamiento:
- *  - Sondeo periódico (por defecto 30 min) + una primera comprobación al arrancar.
- *  - Ventana de previsión configurable (por defecto próximas 6 h).
+ *  - Sondeo periódico (por defecto 15 min) + una primera comprobación al arrancar.
+ *  - Ventana de previsión configurable (por defecto 1 h): avisa cuando falta una
+ *    hora o menos para que empiece a llover (LUI-TSK-0133).
+ *  - Open-Meteo da en la franja de las HH:00 el dato de la hora ANTERIOR: la
+ *    lluvia de la franja de las 16:00 empieza a las 15:00, y esa es la hora que
+ *    se avisa.
  *  - Lluvia si probabilidad ≥ probThreshold o precipitación ≥ precipThreshold;
  *    tormenta si el weathercode es 95/96/99.
  *  - Anti-repetición por episodio: no re-avisa mientras el mismo episodio siga en
@@ -43,6 +47,7 @@ import { isInQuietWindow, parseQuietWindow } from '../cluster/cluster-watcher.js
 import { evaluateForecast, severityRank } from './weather-store.js';
 
 const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/forecast';
+const HOUR_MS = 60 * 60 * 1000;
 
 export function createWeatherWatcher({
   logger,
@@ -52,8 +57,8 @@ export function createWeatherWatcher({
   alexaAnnouncer = null,
   latitude,
   longitude,
-  checkIntervalMs = 30 * 60 * 1000,
-  lookaheadHours = 6,
+  checkIntervalMs = 15 * 60 * 1000,
+  lookaheadHours = 1,
   probThreshold = 50,
   precipThreshold = 0.3,
   alexaTarget = '',
@@ -90,18 +95,24 @@ export function createWeatherWatcher({
    * Open-Meteo con timezone=auto devuelve horas LOCALES ("2026-08-02T18:00") más
    * `utc_offset_seconds`; el epoch absoluto = interpretar la hora como UTC menos
    * el offset. Así la comparación es correcta sea cual sea la TZ del contenedor.
+   * Cada franja es la hora anterior a su marca: epochMs/hourLabel = inicio,
+   * endMs = la marca.
    */
   function buildEntries(data) {
     const h = data?.hourly;
     if (!h || !Array.isArray(h.time)) return [];
     const offsetMs = Number(data.utc_offset_seconds ?? 0) * 1000;
-    return h.time.map((t, i) => ({
-      epochMs: Date.parse(`${t}Z`) - offsetMs,
-      hourLabel: String(t).slice(11, 16),
-      precipitation: h.precipitation?.[i],
-      probability: h.precipitation_probability?.[i],
-      weathercode: h.weathercode?.[i],
-    }));
+    return h.time.map((t, i) => {
+      const localStartMs = Date.parse(`${t}Z`) - HOUR_MS;
+      return {
+        epochMs: localStartMs - offsetMs,
+        endMs: localStartMs + HOUR_MS - offsetMs,
+        hourLabel: Number.isFinite(localStartMs) ? new Date(localStartMs).toISOString().slice(11, 16) : '',
+        precipitation: h.precipitation?.[i],
+        probability: h.precipitation_probability?.[i],
+        weathercode: h.weathercode?.[i],
+      };
+    });
   }
 
   async function notify(text) {

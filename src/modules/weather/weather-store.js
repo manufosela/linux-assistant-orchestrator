@@ -77,9 +77,10 @@ export function classifyHour(entry, { probThreshold, precipThreshold }) {
 /**
  * Evalúa la ventana [now, now+lookahead] de la previsión horaria y devuelve el
  * primer evento relevante: la tormenta más próxima si la hay, o si no la lluvia
- * más próxima. Ignora horas pasadas o fuera de la ventana.
+ * más próxima. Ignora franjas ya terminadas (endMs, o epochMs si no lo hay) o que
+ * empiezan fuera de la ventana.
  *
- * @param {Array<{ epochMs: number, hourLabel: string, precipitation?: number, probability?: number, weathercode?: number }>} entries
+ * @param {Array<{ epochMs: number, endMs?: number, hourLabel: string, precipitation?: number, probability?: number, weathercode?: number }>} entries
  * @param {{ nowMs: number, lookaheadMs: number, probThreshold: number, precipThreshold: number }} opts
  * @returns {{ severity: 'storm'|'rain'|null, at: object|null, prob: number|null, precip: number|null }}
  */
@@ -88,7 +89,7 @@ export function evaluateForecast(entries, { nowMs, lookaheadMs, probThreshold, p
   let rainHit = null;
   for (const e of entries) {
     if (!Number.isFinite(e.epochMs)) continue;
-    if (e.epochMs < nowMs || e.epochMs > nowMs + lookaheadMs) continue;
+    if ((e.endMs ?? e.epochMs) < nowMs || e.epochMs > nowMs + lookaheadMs) continue;
     const cls = classifyHour(e, { probThreshold, precipThreshold });
     if (cls === 'storm' && !stormHit) stormHit = e;
     if (cls != null && !rainHit) rainHit = e;

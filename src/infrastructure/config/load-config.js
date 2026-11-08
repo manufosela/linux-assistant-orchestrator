@@ -392,8 +392,9 @@ export function loadConfig(envPath = '.env') {
       enabled: process.env.WEATHER_WATCHER_ENABLED === 'true',
       latitude: process.env.WEATHER_LAT ? Number(process.env.WEATHER_LAT) : null,
       longitude: process.env.WEATHER_LON ? Number(process.env.WEATHER_LON) : null,
-      checkIntervalMs: Number(process.env.WEATHER_CHECK_INTERVAL_MS ?? 30 * 60 * 1000),
-      lookaheadHours: Number(process.env.WEATHER_LOOKAHEAD_HOURS ?? 6),
+      // Aviso ~1 h antes de que empiece a llover (LUI-TSK-0133).
+      checkIntervalMs: Number(process.env.WEATHER_CHECK_INTERVAL_MS ?? 15 * 60 * 1000),
+      lookaheadHours: Number(process.env.WEATHER_LOOKAHEAD_HOURS ?? 1),
       probThreshold: Number(process.env.WEATHER_PROB_THRESHOLD ?? 50),
       precipThreshold: Number(process.env.WEATHER_PRECIP_THRESHOLD ?? 0.3),
       // Voz Alexa activada por defecto (el usuario la quiere); '' = toda la casa.
