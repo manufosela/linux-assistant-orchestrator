@@ -209,6 +209,7 @@ async function main() {
   let homeAssistant;
   let homeAssistantStateCache;
   let alexaAnnouncer;
+  let haServiceClient;
   // /api/states de HA: lo comparten el parte diario, el guardián Tuya y el informe.
   const haFetchStates = config.homeAssistant.baseUrl && config.homeAssistant.token
     ? async () => {
@@ -249,6 +250,7 @@ async function main() {
       }),
     });
     alexaAnnouncer = createAlexaAnnouncer({ haClient: baseClient, logger });
+    haServiceClient = baseClient;
   }
 
   // Google: OAuth2 + Gmail + Calendar (read-only)
@@ -443,7 +445,9 @@ async function main() {
     const router = createTelegramCommandRouter(allowedChatPolicy, logger);
 
     // Agente con herramientas para el chat general (LUI-TSK-0111).
-    const agentTools = buildAgentTools({ weather: config.weather, webSearch, fetchHaStates: haFetchStates, logger });
+    const agentTools = buildAgentTools({
+      weather: config.weather, webSearch, fetchHaStates: haFetchStates, haClient: haServiceClient, logger,
+    });
     const toolAgent = createToolAgent({ llmService, registry: createToolRegistry(agentTools, { logger }) });
     logger.info({ tools: agentTools.map((tool) => tool.name) }, 'Telegram tool agent ready');
 
