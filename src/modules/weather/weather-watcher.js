@@ -18,6 +18,8 @@
  *    la ventana; solo re-avisa si la severidad ESCALA (lluvia → tormenta). Cuando
  *    la ventana se despeja, reinicia el estado y un futuro episodio vuelve a avisar.
  *  - Franja nocturna para la voz (por defecto 22:00–08:00): Telegram sí, Alexa no.
+ *  - Sábados, domingos y festivos (isRestDay) la voz calla hasta las 12:00
+ *    (LUI-TSK-0134). Si no se puede saber si hoy es festivo, calla y lo registra.
  *  - Si Open-Meteo falla, se descarta el tick y NO se inventan datos.
  *
  * Los mensajes son en español, claros y descriptivos (norma del proyecto).
@@ -37,6 +39,8 @@
  *   alexaTarget?: string,
  *   alexaQuietStart?: string,
  *   alexaQuietEnd?: string,
+ *   isRestDay?: (() => Promise<boolean>) | null,
+ *   restDayQuietUntil?: string,
  *   initialDelayMs?: number,
  *   fetchFn?: typeof fetch,
  *   nowFn?: () => Date,
@@ -64,6 +68,8 @@ export function createWeatherWatcher({
   alexaTarget = '',
   alexaQuietStart = '22:00',
   alexaQuietEnd = '08:00',
+  isRestDay = null,
+  restDayQuietUntil = '12:00',
   initialDelayMs = 30 * 1000,
   fetchFn = fetch,
   nowFn = () => new Date(),
@@ -74,6 +80,7 @@ export function createWeatherWatcher({
   }
 
   const alexaQuietWindow = parseQuietWindow(alexaQuietStart, alexaQuietEnd);
+  const restDayQuietWindow = parseQuietWindow('00:00', restDayQuietUntil);
   const lookaheadMs = lookaheadHours * 60 * 60 * 1000;
   let job = null;
   let firstJob = null;
@@ -128,6 +135,19 @@ export function createWeatherWatcher({
     if (isInQuietWindow(nowFn(), alexaQuietWindow)) {
       logger?.info('Weather: anuncio por voz suprimido (franja nocturna)');
       return;
+    }
+    if (isRestDay && isInQuietWindow(nowFn(), restDayQuietWindow)) {
+      let restDay;
+      try {
+        restDay = await isRestDay();
+      } catch (error) {
+        logger?.warn({ err: error?.message }, 'Weather: no sé si hoy es festivo; voz suprimida por la mañana');
+        return;
+      }
+      if (restDay) {
+        logger?.info('Weather: anuncio por voz suprimido (fin de semana o festivo por la mañana)');
+        return;
+      }
     }
     const targets = alexaTarget
       ? alexaTarget.split(',').map((t) => t.trim()).filter(Boolean)
@@ -219,6 +239,24 @@ export function createWeatherWatcher({
   }
 
   return { start, stop, checkOnce, getState: () => ({ ...(store.getLastAlert() ?? {}) }) };
+}
+
+/**
+ * ¿Hoy es día de descanso? Lee el sensor Workday de HA (on = laborable; off =
+ * sábado, domingo o festivo). Sin dato válido lanza: nunca se adivina.
+ *
+ * @param {() => Promise<Array<{ entity_id: string, state: string }>>} fetchStates
+ * @param {string} entityId
+ * @returns {() => Promise<boolean>}
+ */
+export function createRestDayCheck(fetchStates, entityId) {
+  return async () => {
+    const state = (await fetchStates()).find((s) => s.entity_id === entityId)?.state;
+    if (state !== 'on' && state !== 'off') {
+      throw new Error(`el sensor ${entityId} no tiene dato (${state ?? 'no existe'})`);
+    }
+    return state === 'off';
+  };
 }
 
 /**

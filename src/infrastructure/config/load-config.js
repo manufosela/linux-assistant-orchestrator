@@ -403,6 +403,10 @@ export function loadConfig(envPath = '.env') {
       // Franja en la que NO suena la voz (Telegram sí). Por defecto 22:00–08:00.
       alexaQuietStart: process.env.WEATHER_ALEXA_QUIET_START ?? '22:00',
       alexaQuietEnd: process.env.WEATHER_ALEXA_QUIET_END ?? '08:00',
+      // Sábados, domingos y festivos la voz calla hasta esta hora (LUI-TSK-0134).
+      // Festivos: sensor Workday de HA (España + Comunidad de Madrid).
+      alexaRestDayQuietUntil: process.env.WEATHER_ALEXA_REST_DAY_QUIET_UNTIL ?? '12:00',
+      workdayEntity: process.env.WEATHER_WORKDAY_ENTITY ?? 'binary_sensor.workday_sensor_es_md',
       historyPath:
         process.env.WEATHER_HISTORY_PATH ?? join(homedir(), '.config', 'luis', 'weather-alert.json'),
     },
