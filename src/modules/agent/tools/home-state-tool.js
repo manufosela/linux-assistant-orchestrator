@@ -46,7 +46,10 @@ export function createHomeStateTool({ fetchStates, maxResults = 40 }) {
       'Estado actual de la casa en Home Assistant: calefacción y termostatos (climate), temperaturas y '
       + 'otros sensores, luces, enchufes, persianas, presencia, automatizaciones... Busca por palabras del '
       + 'nombre o la habitación y/o por tipo. Devuelve nombre, estado y, si los hay, temperatura actual y '
-      + 'objetivo, si está calentando (accion=heating) y la potencia que pide cada radiador.',
+      + 'objetivo, si está calentando (accion=heating) y la potencia que pide cada radiador. '
+      + 'Si no estás seguro del tipo, no lo pongas y busca solo por palabras (un enchufe puede llamarse '
+      + '"luces"). Para la temperatura de una habitación busca la habitación sin tipo. Si la pregunta '
+      + 'trata de varias cosas, llama una vez por cada una.',
     parameters: {
       type: 'object',
       properties: {
@@ -66,19 +69,41 @@ export function createHomeStateTool({ fetchStates, maxResults = 40 }) {
       if (words.length === 0 && !domain) {
         throw new Error('Indica query o domain: no se lista la casa entera');
       }
-      const matches = (await fetchStates()).filter((entity) => {
-        const entityDomain = entity.entity_id.split('.')[0];
-        if (domain ? entityDomain !== domain : !READABLE_DOMAINS.includes(entityDomain)) return false;
-        const haystack = normaliseAreaName(`${entity.attributes?.friendly_name ?? ''} ${entity.entity_id.replaceAll('_', ' ')}`);
-        return words.every((word) => haystack.includes(word));
-      });
-      const result = { total: matches.length, entidades: matches.slice(0, maxResults).map(summarise) };
-      if (matches.length > maxResults) {
-        result.aviso = `Solo van las ${maxResults} primeras: afina la búsqueda con más palabras o un tipo.`;
+      const states = await fetchStates();
+      let matches = findMatches(states, domain, words);
+      const notes = [];
+      // El modelo a veces acierta mal el tipo ("luces" que son un enchufe): si con
+      // ese tipo no hay nada, se busca en todos antes de decir que no existe.
+      if (matches.length === 0 && domain && words.length > 0) {
+        matches = findMatches(states, null, words);
+        if (matches.length > 0) notes.push(`Con el tipo ${domain} no hay nada; esto es lo que coincide en otros tipos.`);
       }
+      if (matches.length > maxResults) {
+        notes.push(`Solo van las ${maxResults} primeras: afina la búsqueda con más palabras o un tipo.`);
+      }
+      const result = { total: matches.length, entidades: matches.slice(0, maxResults).map(summarise) };
+      if (notes.length > 0) result.aviso = notes.join(' ');
       return result;
     },
   };
+}
+
+/**
+ * Entidades del tipo pedido (o de cualquier tipo legible) cuyo nombre o id
+ * contiene todas las palabras.
+ *
+ * @param {Array<{ entity_id: string, attributes?: object }>} states
+ * @param {string|null|undefined} domain
+ * @param {string[]} words
+ * @returns {Array<{ entity_id: string, state: string, attributes?: object }>}
+ */
+function findMatches(states, domain, words) {
+  return states.filter((entity) => {
+    const entityDomain = entity.entity_id.split('.')[0];
+    if (domain ? entityDomain !== domain : !READABLE_DOMAINS.includes(entityDomain)) return false;
+    const haystack = normaliseAreaName(`${entity.attributes?.friendly_name ?? ''} ${entity.entity_id.replaceAll('_', ' ')}`);
+    return words.every((word) => haystack.includes(word));
+  });
 }
 
 /**
