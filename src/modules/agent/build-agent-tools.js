@@ -2,7 +2,7 @@ import { createWeatherForecastTool } from './tools/weather-forecast-tool.js';
 import { createWebSearchTool } from './tools/web-search-tool.js';
 import { createHomeStateTool } from './tools/home-state-tool.js';
 import { createHomeControlTool } from './tools/home-control-tool.js';
-
+import { createNodesStatusTool } from './tools/nodes-status-tool.js';
 /**
  * Builds the tools the Telegram agent may use from the services LUIS has
  * configured (LUI-TSK-0111). A tool whose service is missing is not offered
@@ -13,11 +13,12 @@ import { createHomeControlTool } from './tools/home-control-tool.js';
  *   webSearch?: Pick<import('../web/web-search.js').WebSearchService, 'search'>,
  *   fetchHaStates?: () => Promise<Array<{ entity_id: string, state: string, attributes?: object }>>,
  *   haClient?: Pick<import('../home-assistant/ha-client.js').HomeAssistantClient, 'callService'>,
+ *   clusterStatus?: Pick<import('../cluster/cluster-status-service.js').ClusterStatusService, 'probe'>,
  *   logger: import('pino').Logger,
  * }} deps
  * @returns {import('./tool-registry.js').AgentTool[]}
  */
-export function buildAgentTools({ weather, webSearch, fetchHaStates, haClient, logger }) {
+export function buildAgentTools({ weather, webSearch, fetchHaStates, haClient, clusterStatus, logger }) {
   const tools = [];
 
   if (Number.isFinite(weather.latitude) && Number.isFinite(weather.longitude)) {
@@ -42,6 +43,12 @@ export function buildAgentTools({ weather, webSearch, fetchHaStates, haClient, l
     tools.push(createHomeControlTool({ fetchStates: fetchHaStates, haClient, logger }));
   } else {
     logger.warn({ tool: 'control_home_device' }, 'Agent tool not registered: Home Assistant not configured');
+  }
+
+  if (clusterStatus) {
+    tools.push(createNodesStatusTool({ clusterStatus }));
+  } else {
+    logger.warn({ tool: 'get_nodes_status' }, 'Agent tool not registered: cluster status not configured');
   }
 
   return tools;

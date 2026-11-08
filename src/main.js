@@ -446,7 +446,12 @@ async function main() {
 
     // Agente con herramientas para el chat general (LUI-TSK-0111).
     const agentTools = buildAgentTools({
-      weather: config.weather, webSearch, fetchHaStates: haFetchStates, haClient: haServiceClient, logger,
+      weather: config.weather,
+      webSearch,
+      fetchHaStates: haFetchStates,
+      haClient: haServiceClient,
+      clusterStatus: clusterStatusService,
+      logger,
     });
     const toolAgent = createToolAgent({ llmService, registry: createToolRegistry(agentTools, { logger }) });
     logger.info({ tools: agentTools.map((tool) => tool.name) }, 'Telegram tool agent ready');
