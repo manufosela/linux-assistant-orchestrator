@@ -12,6 +12,14 @@ describe('buildAgentTools', () => {
     assert.deepEqual(tools.map((tool) => tool.name), ['get_weather_forecast', 'web_search']);
   });
 
+  it('registers the home state tool when Home Assistant is configured', () => {
+    const tools = buildAgentTools({
+      weather: { latitude: 40, longitude: -3 }, webSearch, fetchHaStates: async () => [], logger: silent,
+    });
+
+    assert.deepEqual(tools.map((tool) => tool.name), ['get_weather_forecast', 'web_search', 'get_home_state']);
+  });
+
   it('skips the tools whose service is not configured and logs why', () => {
     const warnings = [];
     const logger = { ...silent, warn: (obj) => warnings.push(obj) };
@@ -19,7 +27,7 @@ describe('buildAgentTools', () => {
     const tools = buildAgentTools({ weather: { latitude: null, longitude: null }, webSearch: undefined, logger });
 
     assert.deepEqual(tools, []);
-    assert.deepEqual(warnings.map((w) => w.tool), ['get_weather_forecast', 'web_search']);
+    assert.deepEqual(warnings.map((w) => w.tool), ['get_weather_forecast', 'web_search', 'get_home_state']);
   });
 });
 
