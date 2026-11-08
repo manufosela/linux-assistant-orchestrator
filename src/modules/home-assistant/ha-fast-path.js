@@ -1,6 +1,6 @@
 import { normaliseAreaName } from './ha-state-cache.js';
 
-const ACTIONABLE_DOMAINS = ['light', 'switch', 'media_player', 'cover', 'fan', 'climate', 'automation', 'script', 'input_boolean', 'humidifier'];
+export const ACTIONABLE_DOMAINS = ['light', 'switch', 'media_player', 'cover', 'fan', 'climate', 'automation', 'script', 'input_boolean', 'humidifier'];
 
 /**
  * Pattern-based fast path for the most common Home Assistant questions and commands.
