@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Cierre de pestañas de agentes paradas",
+  "version": "1.0.0",
+  "description": "Cierra las pestañas de los grupos «Claude» que llevan 30 minutos sin actividad.",
+  "permissions": ["alarms", "storage", "tabGroups"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "minimum_chrome_version": "121"
+}
